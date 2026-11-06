@@ -48,7 +48,12 @@ jobs:
         with:
           # 必须全量历史：rebase 需要共同祖先，depth=1 会让 merge-base 失败
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # 用 PAT 而不是 GITHUB_TOKEN：内置 token **永远**没有 `workflow`
+          # 权限，上游一改 .github/workflows/* 就会被拒：
+          #   refusing to allow a GitHub App to create or update workflow
+          #   `…/frontend-artifacts.yml` without `workflows` permission
+          # 同步必然失败。SYNC_TOKEN 是带 workflow scope 的 PAT。
+          token: ${{ secrets.SYNC_TOKEN }}
 
       - name: Rebase onto upstream
         env:

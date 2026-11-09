@@ -7,7 +7,7 @@ import {
   startPluginInstall, uninstallPlugin, type PackSummary, type PluginMutation, type PluginsPayload,
 } from '../api/plugins'
 import { usePolling } from '../lib/usePolling'
-import { serverIdentity } from '../lib/servers'
+import { serverIdentity, isHostedApp } from '../lib/servers'
 import { store, useStore } from '../state/store'
 import { PluginCard, StorePluginCard } from './plugins/PluginCards'
 import { PluginSettingsSheet } from './plugins/PluginSettingsSheet'
@@ -15,7 +15,11 @@ import { t } from '../i18n'
 import '../styles/checkin.css'
 
 export function PluginsPage() {
-  const { server } = useStore()
+  const { server, packaged } = useStore()
+  // packedInApk：内置 WebView 形态。PluginCard 靠它隐藏「更新到 vX」——
+  // 面板内升级会把插件二进制复制到 app 私有目录再 exec，必然 Permission denied。
+  // packaged 认的是 Capacitor 桥，在 APK 的 WebView 里恒为 false，不能直接用。
+  const packedInApk = packaged || isHostedApp()
   const [payload, setPayload] = useState<PluginsPayload | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
@@ -125,6 +129,7 @@ export function PluginsPage() {
       <div className='m-section'>
         <SectionHead title={t('已安装插件')} />
         {packs.map(pack => <PluginCard key={pack.id} pack={pack} busy={Boolean(busy)} target={payload?.target || ''}
+          packaged={packedInApk}
           update={payload?.updates?.find(update => update.id === pack.id)}
           operation={payload?.operations?.find(operation => operation.id === pack.id)}
           onEnabled={enabled => void mutation(`enable:${pack.id}`, () => setPluginEnabled(pack.id, enabled))}

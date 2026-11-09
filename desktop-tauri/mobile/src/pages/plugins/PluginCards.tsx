@@ -4,6 +4,13 @@ import type { PackSummary, PluginOperation, PluginUpdate, StorePlugin } from '..
 import { pluginErrorMessage } from '../../api/plugins'
 import { t } from '../../i18n'
 
+/**
+ * 插件操作的进度与结果。
+ *
+ * 失败记录里「已被后续安装覆盖」的那种，在 `api/plugins.ts` 的
+ * `dropStaleOperations` 就已经被删掉了 —— 这里拿到的都是仍然成立的记录：
+ * 正在跑的任务、或确实还没被覆盖的失败。所以这里只管如实渲染。
+ */
 function PluginProgress({ operation }: { operation?: PluginOperation }) {
   if (!operation) return null
   const stage = operation.stage === 'downloading' ? t('网关正在下载…')
@@ -11,6 +18,7 @@ function PluginProgress({ operation }: { operation?: PluginOperation }) {
     : operation.stage === 'waiting' ? t('等待当前任务结束，插件继续服务…')
     : operation.stage === 'loading' ? t('正在加载新插件…')
     : operation.stage === 'restoring' ? t('正在恢复旧版本插件…') : t('网关正在安装…')
+
   return <>
     {operation.active ? <div className='my-3' aria-live='polite'>
       <p className='m-ck-note'>{operation.required ? `${t('正在补齐插件…')} · ` : ''}{stage}{operation.stage === 'downloading' && operation.percent != null ? ` ${Math.round(operation.percent)}%` : ''}</p>
@@ -52,7 +60,7 @@ export function StorePluginCard({ item, target, busy, operation, onInstall }: {
   </Card>
 }
 
-export function PluginCard({ pack, target, busy, update, operation, onEnabled, onProvider, onUpdate, onRemove }: {
+export function PluginCard({ pack, target, busy, update, operation, onEnabled, onProvider, onUpdate, onRemove, packaged }: {
   pack: PackSummary
   target: string
   busy: boolean
@@ -62,6 +70,13 @@ export function PluginCard({ pack, target, busy, update, operation, onEnabled, o
   onProvider: (id: string, enabled: boolean) => void
   onUpdate: () => void
   onRemove: () => void
+  /**
+   * 是否跑在 APK 里。APK 形态下插件二进制必须是指向 `nativeLibraryDir` 的软链
+   * （app 私有目录 noexec），而面板内升级会把二进制复制到私有目录再 exec —
+   * 必然 `Permission denied`。所以这种形态要把更新入口换成「换新版 APK」的说明，
+   * 而不是留一个点一次就失败一次的按钮。
+   */
+  packaged?: boolean
 }) {
   const required = pack.updateRequired === true
   const locked = busy || operation?.active === true
@@ -96,10 +111,21 @@ export function PluginCard({ pack, target, busy, update, operation, onEnabled, o
       <Button size='sm' variant='outline' disabled={locked} onClick={onRemove}>{t('卸载')}</Button>
       {required ? <Button size='sm' disabled={locked || update?.repairing === true} onClick={onUpdate}>
         {update?.repairing ? t('正在补齐插件…') : t('补齐插件')}
-      </Button> : update?.available ? <Button size='sm' disabled={locked || update.error || !update.asset || update.asset.target !== target} onClick={onUpdate}>
+      </Button> : update?.available ? (packaged ? null : <Button size='sm' disabled={locked || update.error || !update.asset || update.asset.target !== target} onClick={onUpdate}>
         {t('更新到 v{version}', { version: update.latest || '' })}
-      </Button> : null}
+      </Button>) : null}
     </div>
+    {/*
+      * APK 形态下不给「更新」按钮：插件二进制必须是指向 nativeLibraryDir 的软链，
+      * 面板内升级会把二进制复制到 app 私有目录再 exec，SELinux/noexec 必然拒绝
+      * （`Permission denied (os error 13)`），点了也只是白白记一条失败。
+      * 与其留一个注定失败的按钮，不如直说换 APK。
+      */}
+    {packaged && update?.available ? <p className='m-ck-note'>
+      {t('有新版本 v{version}：内置插件随 APK 更新，请安装新版 APK；在面板内升级会因可执行权限失败。', {
+        version: update.latest || '',
+      })}
+    </p> : null}
     <Collapsible className='mt-3 border-t border-hairline pt-3'>
       <CollapsibleTrigger className='m-ck-title'>{t('提供商启停')}</CollapsibleTrigger><CollapsibleContent keepMounted>
       {pack.providers?.map(provider => <Label className='m-ck-toolbar py-2' key={provider.id}>

@@ -44,17 +44,13 @@ type AppState = {
   loading: boolean
   theme: ThemeMode
   toast: { text: string; tone: 'ok' | 'err' | 'warn' } | null
-  /**
-   * 需要用户补凭证时置位，界面弹对应层：
-   *   · `login` —— 管理员会话过期，弹登录表单
-   *   · `key`   —— 兼容模式没配 Key，弹 Key 输入
-   */
-  authLost: 'login' | 'key' | null
+  /** 需要用户补凭证时置位：只可能是网关 API Key。 */
+  authLost: 'key' | null
   /** 已配置的服务器列表（APK 下可多台；PWA 下恒为空） */
   servers: ServerEntry[]
   /** 当前服务器（PWA 下是伪条目，base = 当前 origin） */
   server: ServerEntry | null
-  /** 打包形态（APK）才需要服务器配置页与登录页 */
+  /** 打包形态（APK）才需要服务器配置页 */
   packaged: boolean
   /** 地址或服务器变化时递增，用于销毁上一台网关的页内缓存。 */
   serverRevision: number
@@ -221,7 +217,7 @@ class Store {
    * 安卓物理返回键的统一入口。
    *
    * 返回 `true` 表示「这次返回被我们消费掉了」，调用方据此决定是否退出应用。
-   * 顺序：登录层（交给它自己处理）→ 二级页 → 非首页回首页 → 首页放行退出。
+   * 顺序：凭证层（交给它自己处理）→ 二级页 → 非首页回首页 → 首页放行退出。
    *
    * `selfBackPending > 0` 时说明上一次返回还在等 popstate 回来（浏览器历史
    * 是异步的）。这时**再按一次不能立刻再退** —— 那会连退两页；直接当作
@@ -407,7 +403,7 @@ class Store {
 
   /* ── 凭证丢失 ── */
 
-  setAuthLost(mode: 'login' | 'key' | null): void {
+  setAuthLost(mode: 'key' | null): void {
     this.patch({ authLost: mode })
   }
 }

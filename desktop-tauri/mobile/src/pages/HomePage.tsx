@@ -210,7 +210,7 @@ export function HomePage() {
           <QuickEntry icon='checkin' label={t('签到')} onClick={() => store.push(checkinKey)} />
           <QuickEntry icon='model' label={t('模型')} onClick={() => store.push('models')} />
           <QuickEntry icon='key' label={t('Key')} onClick={() => store.push('keys')} />
-          <QuickEntry icon='doc' label={t('接入')} onClick={() => store.push('docs')} />
+          <QuickEntry icon='doc' label={t('接入')} onClick={() => void copyWithToast(apiBase() + '/v1', t('接口地址'))} />
         </Card>
       </div>
 

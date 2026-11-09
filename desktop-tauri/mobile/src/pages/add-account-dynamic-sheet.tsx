@@ -3,9 +3,10 @@ import { useEffect, useRef, useState } from 'react'
 import {
   Alert, AlertDescription, AlertTitle, Badge, Button, Card, Input, Label, Select,
   SelectContent, SelectItem, SelectTrigger, SelectValue, Sheet, SheetBody, SheetContent,
-  SheetHeader, SheetTitle, Spinner,
+  SheetHeader, SheetTitle, Spinner, Textarea,
 } from '@ui'
 import { ProviderLogo } from '../components/ProviderLogo'
+import { apiCall } from '../api/client'
 import { providerLabel } from '../lib/providers'
 import { serverIdentity } from '../lib/servers'
 import { store, useStore } from '../state/store'
@@ -90,10 +91,27 @@ function DynamicForm({ provider, label, source, onAdded }: {
   const callbackRequest = useRef(false)
   const callbackGeneration = useRef(0)
   const [canceling, setCanceling] = useState(false)
+  /** 流程未声明 manualCallback 时，仍允许用户手动贴一次回调（后端只认 state） */
+  const [manualCallbackOpen, setManualCallbackOpen] = useState(false)
+  /** 兜底通道：插件没申报动态登录方式时，直接贴凭证文件内容建号 */
+  const [manualOpen, setManualOpen] = useState(false)
+  const [manualText, setManualText] = useState('')
+  const [manualFile, setManualFile] = useState<{ name: string; base64: string } | null>(null)
+  const [manualName, setManualName] = useState('')
+  const [manualBusy, setManualBusy] = useState(false)
+  const [manualError, setManualError] = useState('')
   const flowRef = useRef('')
   const mounted = useRef(false)
   const submitting = useRef(false)
   const identity = serverIdentity()
+  /**
+   * 指向最新一次渲染的 `submitCallbackValue`。
+   *
+   * 原生回调入口（window.__a2aSubmitLoginCallback）只挂载一次，闭包里
+   * 的 flow/state 会过期；用 ref 转一次手，保证注入进来的回调总是交给
+   * **当前**这轮登录状态处理。
+   */
+  const submitRef = useRef<(raw: string) => Promise<void>>(async () => {})
   const method = methods.methods.find(item => item.id === selected) || methods.methods[0]
   const inputs = method ? values[method.id] || {} : {}
   const hasNamePrompt = Boolean(method?.prompts.some(prompt => prompt.key === 'name'))
@@ -136,8 +154,8 @@ function DynamicForm({ provider, label, source, onAdded }: {
       if (controller.signal.aborted) return
       const builtin = source === 'builtin' || provider.endsWith('-subscription')
       setMethods({ phase: 'error', methods: [], instructions: '', reason: methodsUnavailable(failure)
-        ? builtin ? t('本体订阅未返回动态登录方式（501）；不会猜测导入接口或显示插件手动凭证入口。请更新网关后重试。')
-          : t('此提供商未声明动态登录方式，请在网关桌面面板使用其既有入口；手机端不会猜测凭证字段。')
+        ? builtin ? t('本体订阅未返回动态登录方式（501）。可以直接粘贴凭证内容手动添加，或更新网关后重试。')
+          : t('此提供商未申报动态登录方式。可以直接粘贴凭证内容手动添加。')
         : dynamicLoginError(failure) })
     })
     return () => controller.abort()
@@ -282,9 +300,67 @@ function DynamicForm({ provider, label, source, onAdded }: {
   }
 
   async function sendCallback() {
-    if (!flow?.manual || callbackRequest.current || canceling || flowRef.current !== flow.state) return
+    if (!flow || callbackRequest.current || canceling || flowRef.current !== flow.state) return
     const raw = callbackInputRef.current?.value || ''
     if (!raw) return
+    await submitCallbackValue(raw)
+  }
+
+  /**
+   * 兜底建号：直接把凭证文件内容交给 `POST /api/accounts`。
+   *
+   * 插件没申报动态登录方式时（`/methods` 返回 501），桌面端走的是「导入凭证
+   * 文件」那条路；手机端原先只有一句「去桌面面板」，等于这件事做不了。后端
+   * 早就认 `authFileContent`（文本）/ `authFileB64`（二进制），所以把用户手边
+   * 那份凭证整段贴进来就能建号，不需要电脑。
+   */
+  async function submitManual() {
+    const hasText = Boolean(manualText.trim())
+    const hasFile = Boolean(manualFile?.base64)
+    if (manualBusy || (!hasText && !hasFile)) return
+    setManualBusy(true)
+    setManualError('')
+    try {
+      const remark = manualName.trim()
+      /**
+       * 两条通道二选一：
+       * · `authFileContent` —— 文本凭证（JSON），用户直接粘贴；
+       * · `authFileB64`      —— 二进制凭证（Cookies SQLite 等），用文件选择器读成 base64。
+       * 后端对两者走同一套导入逻辑（见 `accounts_export::import_account_file`），
+       * 所以手机端不需要退回桌面端的「选文件导入」。
+       */
+      const body: Record<string, unknown> = hasFile
+        ? { provider, authFileB64: manualFile?.base64, authFileName: manualFile?.name }
+        : {
+            provider,
+            authFileContent: manualText.trim(),
+            // 文件名只用于错误文案与日志，不参与解析；给个像样的默认值即可。
+            authFileName: remark ? `${remark}.json` : 'credentials.json',
+          }
+      if (remark) body.name = remark
+      await apiCall('/api/accounts', { method: 'POST', body })
+      setManualText('')
+      setManualFile(null)
+      setManualName('')
+      setManualOpen(false)
+      await finish()
+    } catch (failure) {
+      setManualError(failure instanceof Error ? failure.message : String(failure))
+    } finally {
+      if (mounted.current) setManualBusy(false)
+    }
+  }
+
+  /**
+   * 把一段回调原文交给网关。
+   *
+   * 抽出来是因为有两个入口：用户在输入框里粘贴（[sendCallback]），
+   * 和**原生隔离登录容器**回传（见下面的 `__a2aSubmitLoginCallback`）。
+   * 两条路必须走同一套校验与收尾 —— 否则原生回来的回调会绕过
+   * `flowRef` 的时序保护，把过期的 state 提上去。
+   */
+  async function submitCallbackValue(raw: string) {
+    if (!flow || callbackRequest.current || canceling || flowRef.current !== flow.state) return
     const state = flow.state
     const generation = callbackGeneration.current
     const isCurrent = () => mounted.current && serverIdentity() === identity && flowRef.current === state
@@ -299,13 +375,17 @@ function DynamicForm({ provider, label, source, onAdded }: {
       if (callbackInputRef.current) callbackInputRef.current.value = ''
       setHasCallback(false)
       if (next.nextUrl) {
-        await cancelDynamicLogin(state)
-        if (!isCurrent()) return
-        clearCallback()
-        flowRef.current = ''
-        setFlow(null)
+        /**
+         * 多步登录（二次确认、额外授权页）：服务端给了下一步地址，流程**没结束**。
+         *
+         * 旧实现在这里 `cancelDynamicLogin` + 清空 flow，等于把用户踢回起点并
+         * 让他去桌面端重来 —— 那是把「没做完」当成「做不了」。正确做法是留着
+         * 同一个 state（网关靠它认领任务），把 flow.url 换成下一步地址，让用户
+         * 继续在授权页里走完。
+         */
+        setFlow(current => (current ? { ...current, url: next.nextUrl as string } : current))
         setProgress('')
-        setError(t('该登录需要继续跳转，请在网关桌面面板重新发起。'))
+        setCallbackNotice(t('还需要一步授权：请点「打开官方授权页」继续。'))
         return
       }
       setCallbackNotice(t('回调已提交，仍需等待网关确认账号登录完成。'))
@@ -320,10 +400,91 @@ function DynamicForm({ provider, label, source, onAdded }: {
     }
   }
 
+  // 每次渲染把最新闭包挂到 ref 上，供只挂载一次的原生回调入口调用。
+  submitRef.current = submitCallbackValue
+
+  /**
+   * 原生侧的回调入口。
+   *
+   * ── 为什么需要它 ────────────────────────────────────────────
+   * 安卓上的授权页跑在独立容器（A2aLoginActivity）里：那个 WebView 与
+   * 面板不同源，拿不到面板的 Cookie，也读不到 React 状态。它唯一能做
+   * 的是把最终 URL 交回来。而提交这个 URL 必须带上**本组件手里**的
+   * state（网关靠它认领登录任务），所以只能由组件自己发请求。
+   *
+   * 挂在 window 上而不是靠 postMessage：注入发生在面板自己的页面里，
+   * 同源，直接调函数最简单；名字带 `__a2a` 前缀避免与站点其它全局撞名。
+   */
+  useEffect(() => {
+    const handler = (raw: string) => {
+      if (typeof raw === 'string' && raw) void submitRef.current(raw)
+    }
+    ;(window as unknown as Record<string, unknown>).__a2aSubmitLoginCallback = handler
+    const onEvent = (event: Event) => {
+      const detail = (event as CustomEvent<{ callbackUrl?: string }>).detail
+      if (detail?.callbackUrl) handler(detail.callbackUrl)
+    }
+    window.addEventListener('a2a-isolated-login', onEvent)
+    return () => {
+      const holder = window as unknown as Record<string, unknown>
+      if (holder.__a2aSubmitLoginCallback === handler) delete holder.__a2aSubmitLoginCallback
+      window.removeEventListener('a2a-isolated-login', onEvent)
+    }
+  }, [])
+
   return <div className='flex min-w-0 flex-col gap-3'>
     {methods.phase === 'loading' ? <p><Spinner /> {t('正在读取插件登录方式…')}</p> : null}
     {methods.reason ? <Alert variant={methods.phase === 'error' ? 'destructive' : 'warning'}>
       <AlertDescription>{methods.reason}</AlertDescription></Alert> : null}
+    {/* 插件没申报登录方式时的兜底：贴凭证建号，不必回电脑 */}
+    {methods.phase === 'error' ? (manualOpen ? <div className='flex min-w-0 flex-col gap-2'>
+      <Label htmlFor={`${prefix}-manual-name`}>{t('备注名（可选）')}</Label>
+      <Input id={`${prefix}-manual-name`} value={manualName} autoComplete='off'
+        onChange={event => setManualName(event.currentTarget.value)} />
+      <Label htmlFor={`${prefix}-manual`}>{t('凭证内容（JSON 原文）')}</Label>
+      <Textarea id={`${prefix}-manual`} value={manualText} rows={6} spellCheck={false}
+        autoCapitalize='none' autoComplete='off'
+        placeholder={t('把凭证文件的内容整段贴进来')}
+        onChange={event => { setManualText(event.currentTarget.value); setManualFile(null); setManualError('') }} />
+      {/*
+        * 二进制凭证（Cookies SQLite 之类）没法粘，但手机上有文件选择器：
+        * 读成 base64 交给后端 `authFileB64`，和桌面端「选文件导入」是同一条路。
+        */}
+      <Label htmlFor={`${prefix}-manual-file`}>{t('或者直接选凭证文件')}</Label>
+      <input
+        id={`${prefix}-manual-file`}
+        type='file'
+        className='text-xs'
+        onChange={event => {
+          const file = event.currentTarget.files?.[0]
+          if (!file) return
+          const reader = new FileReader()
+          reader.onload = () => {
+            const raw = String(reader.result || '')
+            // dataURL 形如 `data:...;base64,XXXX`，只留逗号后面那段。
+            const base64 = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw
+            setManualFile({ name: file.name, base64 })
+            setManualText('')
+            setManualError('')
+            if (!manualName.trim()) setManualName(file.name.replace(/\.[^.]+$/, ''))
+          }
+          reader.onerror = () => setManualError(t('读取文件失败，请重试'))
+          reader.readAsDataURL(file)
+        }}
+      />
+      {manualFile ? (
+        <p className='text-xs text-subtle'>{t('已选择：{name}（{size} KB，将以 base64 提交）', {
+          name: manualFile.name,
+          size: Math.max(1, Math.round((manualFile.base64.length * 3) / 4 / 1024)),
+        })}</p>
+      ) : <p className='text-xs text-subtle'>{t('文本凭证可以直接粘贴；二进制文件用这里的文件选择器。两者二选一。')}</p>}
+      <div className='flex gap-2'>
+        <Button variant='outline' disabled={manualBusy} onClick={() => { setManualOpen(false); setManualError('') }}>{t('取消')}</Button>
+        <Button disabled={manualBusy || (!manualText.trim() && !manualFile)} onClick={() => void submitManual()}>
+          {manualBusy ? <Spinner /> : null}{t('添加账号')}</Button>
+      </div>
+      {manualError ? <Alert variant='destructive'><AlertDescription className='break-words'>{manualError}</AlertDescription></Alert> : null}
+    </div> : <Button variant='outline' onClick={() => setManualOpen(true)}>{t('粘贴凭证手动添加')}</Button>) : null}
     {method ? <>
       <Select value={method.id} disabled={locked} onValueChange={value => {
         setSelected(value || ''); setValues({}); setPassword(''); clearCallback(); setError('')
@@ -395,7 +556,27 @@ function DynamicForm({ provider, label, source, onAdded }: {
             {callbackBusy ? <Spinner /> : null}{t('提交授权回调')}</Button>
           {callbackNotice ? <p role='status'>{callbackNotice}</p> : null}
           {callbackError ? <Alert variant='destructive'><AlertDescription>{callbackError}</AlertDescription></Alert> : null}
-        </> : <p>{t('如官方页面跳回的是网关本机地址，请在桌面面板完成回调；手机端不会猜测未声明的回调输入。')}</p>}
+        </> : manualCallbackOpen ? <>
+          {/*
+            * 插件没申报 manualCallback 时的兜底：后端 `/api/session/login/callback`
+             * 只要求 state 对应一个活着的任务，并**不校验**流程是否声明过 manual
+             * （见 `session.rs` 的 `login_callback`）。所以授权页跳回本机地址时，
+             * 用户把地址整段贴进来一样能收尾 —— 不需要回桌面端。
+             */}
+          <Badge variant='outline'>{t('回调卡住了？可以手动提交')}</Badge>
+          <p>{t('授权页跳回的是网关本机地址（127.0.0.1 / localhost）时，地址栏里那串完整 URL 直接粘进来即可。')}</p>
+          <Label htmlFor={`${prefix}-callback`}>{t('完整回调地址（原样提交）')}</Label>
+          <Input key={`${flow.state}:fallback`} id={`${prefix}-callback`} ref={callbackInputRef}
+            type='text' defaultValue=''
+            autoComplete='off' spellCheck={false} autoCapitalize='none'
+            placeholder={t('http://127.0.0.1:18901/...')}
+            onChange={event => { setHasCallback(event.currentTarget.value.length > 0); setCallbackError(''); setCallbackNotice('') }}
+            disabled={callbackBusy || canceling} />
+          <Button variant='outline' disabled={!hasCallback || callbackBusy || canceling} onClick={() => void sendCallback()}>
+            {callbackBusy ? <Spinner /> : null}{t('提交授权回调')}</Button>
+          {callbackNotice ? <p role='status'>{callbackNotice}</p> : null}
+          {callbackError ? <Alert variant='destructive'><AlertDescription>{callbackError}</AlertDescription></Alert> : null}
+        </> : <Button variant='ghost' onClick={() => setManualCallbackOpen(true)}>{t('回调卡住了？手动提交回调')}</Button>}
         <Button variant='outline' disabled={canceling} onClick={() => void cancel()}>{t('取消等待')}</Button>
       </AlertDescription>
     </Alert> : null}

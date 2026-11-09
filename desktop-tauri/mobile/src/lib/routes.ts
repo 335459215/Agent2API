@@ -1,6 +1,7 @@
 export const SCREEN_IDS = [
-  'home', 'report', 'accounts', 'assistant', 'more', 'models', 'keys', 'proxies',
-  'tasks', 'requests', 'logs', 'settings', 'docs', 'agent', 'tools', 'servers', 'checkin', 'plugins',
+  'home', 'report', 'accounts', 'more', 'models', 'keys', 'proxies',
+  'tasks', 'requests', 'logs', 'settings', 'agent', 'tools', 'servers', 'checkin', 'plugins',
+  'routing',
 ] as const
 
 export type ScreenId = typeof SCREEN_IDS[number]

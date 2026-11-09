@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Icon, type IconName } from './Icon'
 import { useStore, store } from '../state/store'
-import { LoginPage } from '../pages/LoginPage'
 import { isRateLimited } from '../lib/format'
 import { t } from '../i18n'
 import { BottomNavigation, BottomNavigationItem, Button, Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle, Input, StatusDot, Toaster, createToastManager } from '@ui'
@@ -12,8 +11,7 @@ const feedbackManager = createToastManager()
  * 应用外壳：页面容器 + 底部标签栏 + 轻提示 + 凭证缺失层。
  *
  * ── 标签栏的显示规则 ─────────────────────────────────────────
- * 一级页显示，二级页隐藏（把高度让给内容）。助手页要撑满视口，所以它的
- * 滚动容器自己管（见 pages/AssistantPage 的 as-mode 处理）。
+ * 一级页显示，二级页隐藏（把高度让给内容）。
  */
 
 export type TabDef = { id: string; label: string; icon: IconName }
@@ -22,7 +20,6 @@ const TABS: TabDef[] = [
   { id: 'home', label: t('首页'), icon: 'home' },
   { id: 'report', label: t('报表'), icon: 'chart' },
   { id: 'accounts', label: t('账号'), icon: 'users' },
-  { id: 'assistant', label: t('助手'), icon: 'spark' },
   { id: 'more', label: t('更多'), icon: 'grid' },
 ]
 
@@ -107,31 +104,14 @@ export function Toast() {
 /**
  * 凭证缺失层。
  *
- * 两种来路，文案与动作都不同：
- *   · `login` —— 管理员已注册、会话过期：APK 弹应用内登录表单；
- *     浏览器（PWA）跳服务端登录页，带回跳。
- *   · `key`   —— 兼容模式（没注册管理员）没配 Key：就地输入，存 localStorage
- *
- * 为什么 APK 不能跳 `/login`：那个页面由网关出，而 APK 的界面在包里 ——
- * 跳过去等于离开应用、进一个风格不一致的网页，而且跨源之后服务端种的
- * cookie 也带不回来（见 lib/servers.ts 的说明）。
+ * 本机内嵌模式不再有账号密码登录，唯一可能的凭证缺口是网关 API Key：
+ * 就地输入并保存到 localStorage，不跳任何服务端登录页。
  */
 export function AuthGate() {
   const state = useStore()
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
   if (!state.authLost) return null
-
-  /**
-   * APK 里登录页是整屏的，用户被登出后看不到「设置 → 服务器」。
-   * 登录页给了「换一台服务器」入口，它把用户压进服务器页 —— 这一屏必须让开，
-   * 否则登录页盖住整个界面，列表点不到。authLost 故意不清：用户取消返回后
-   * 登录页会重新盖上来，换到新服务器也会按新地址重新弹。
-   */
-  if (state.packaged && state.route.screen === 'servers') return null
-
-  // 打包形态走整屏的应用内登录页（login / key 两种模式它都覆盖）
-  if (state.packaged) return <LoginPage mode={state.authLost} />
 
   const submit = async () => {
     const value = key.trim()
@@ -146,16 +126,13 @@ export function AuthGate() {
 
   return <Dialog open disablePointerDismissal>
     <DialogContent className='w-[min(340px,calc(100vw-40px))]' showCloseButton={false}>
-      <DialogHeader><DialogTitle>{state.authLost === 'login' ? t('需要重新登录') : t('需要网关 API Key')}</DialogTitle></DialogHeader>
+      <DialogHeader><DialogTitle>{t('需要网关 API Key')}</DialogTitle></DialogHeader>
       <DialogBody>
-        <p className='text-[12.5px] leading-relaxed text-subtle'>{state.authLost === 'login'
-          ? t('会话已过期。重新登录后会自动回到手机端。')
-          : t('这个面板没有管理员，用一把已启用的 API Key 访问（在桌面端「网关 Key」页创建）。')}</p>
-        {state.authLost === 'key' && <Input type='password' value={key} onChange={event => setKey(event.target.value)} placeholder='sk-…' autoComplete='off' />}
+        <p className='text-[12.5px] leading-relaxed text-subtle'>{t('这台网关已经设了 API Key。粘贴一把已启用的 Key 继续（可在任意已登录客户端的「网关 Key」页新建）。')}</p>
+        <Input type='password' value={key} onChange={event => setKey(event.target.value)} placeholder='sk-…' autoComplete='off' />
       </DialogBody>
       <DialogFooter>
-        {state.authLost === 'login' ? <Button size='touch' className='w-full' onClick={() => { window.location.href = '/login?next=%2Fm' }}>{t('去登录')}</Button>
-          : <Button size='touch' className='w-full' onClick={() => void submit()} disabled={busy || !key.trim()}>{busy ? t('验证中…') : t('保存并继续')}</Button>}
+        <Button size='touch' className='w-full' onClick={() => void submit()} disabled={busy || !key.trim()}>{busy ? t('验证中…') : t('保存并继续')}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>

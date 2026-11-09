@@ -2,12 +2,9 @@ import React, { useEffect } from 'react'
 import { AppFrame } from '@ui'
 import { store, useStore, bootstrapTheme } from './state/store'
 import { TabBar, Toast, AuthGate, ThemeSync } from './components/Shell'
-import { PwaNotice } from './components/PwaNotice'
-import { usePwa } from './lib/usePwa'
 import { HomePage } from './pages/HomePage'
 import { ReportPage } from './pages/ReportPage'
 import { AccountsPage } from './pages/AccountsPage'
-import { AssistantPage } from './pages/AssistantPage'
 import { MorePage } from './pages/MorePage'
 import { ModelsPage } from './pages/ModelsPage'
 import { KeysPage } from './pages/KeysPage'
@@ -16,12 +13,12 @@ import { TasksPage } from './pages/TasksPage'
 import { RequestsPage } from './pages/RequestsPage'
 import { LogsPage } from './pages/LogsPage'
 import { SettingsPage } from './pages/SettingsPage'
-import { DocsPage } from './pages/DocsPage'
 import { AgentPage } from './pages/AgentPage'
 import { ToolsPage } from './pages/ToolsPage'
 import { ServersPage } from './pages/ServersPage'
 import { CheckinPage } from './pages/CheckinPage'
 import { PluginsPage } from './pages/PluginsPage'
+import { RoutingPage } from './pages/RoutingPage'
 import type { ScreenId } from './lib/routes'
 import { NavBar } from './components/NavBar'
 import { t } from './i18n'
@@ -44,7 +41,6 @@ const SCREENS: Record<ScreenId, ScreenDef> = {
   home: { title: t('首页'), component: HomePage, primary: true },
   report: { title: t('报表'), component: ReportPage, primary: true },
   accounts: { title: t('账号'), component: AccountsPage, primary: true },
-  assistant: { title: t('AI 助手'), component: AssistantPage, primary: true },
   more: { title: t('更多'), component: MorePage, primary: true },
   models: { title: t('模型管理'), component: ModelsPage },
   keys: { title: t('网关 Key'), component: KeysPage },
@@ -53,22 +49,19 @@ const SCREENS: Record<ScreenId, ScreenDef> = {
   requests: { title: t('请求日志'), component: RequestsPage },
   logs: { title: t('运行日志'), component: LogsPage },
   settings: { title: t('设置'), component: SettingsPage },
-  docs: { title: t('接口文档'), component: DocsPage },
   agent: { title: t('Agent 配置'), component: AgentPage },
   tools: { title: t('工具服务'), component: ToolsPage },
   servers: { title: t('服务器'), component: ServersPage },
   checkin: { title: t('签到中心'), component: CheckinPage },
   plugins: { title: t('网关插件'), component: PluginsPage },
+  routing: { title: t('路由组'), component: RoutingPage },
 }
 
 export function App() {
   const state = useStore()
-  const pwa = usePwa()
   const def = SCREENS[state.route.screen]
   const Page = def.component
   const isPrimary = Boolean(def.primary)
-  // 助手页自己滚动对话区，外层不再创建第二个滚动容器。
-  const fillHeight = state.route.screen === 'assistant'
   /**
    * APK 首次启动、一台服务器都没配：**没有地址就什么都拉不到**，所以直接
    * 顶掉整个界面（不显示标签栏 —— 切到别的标签也是空的）。配好一台之后
@@ -156,15 +149,10 @@ export function App() {
   }
 
   return (
-    <AppFrame className='m-app' data-offline={pwa.offline ? 'true' : undefined}>
+    <AppFrame className='m-app'>
       <ThemeSync />
-      <PwaNotice />
       {isPrimary ? null : <NavBar title={def.title} onBack={() => store.back()} />}
-      <div
-        className='m-scroll'
-        style={fillHeight ? { overflow: 'hidden' } : undefined}
-        data-screen={state.route.screen}
-      >
+      <div className='m-scroll' data-screen={state.route.screen}>
         <Page key={state.serverRevision} />
       </div>
       <TabBar />

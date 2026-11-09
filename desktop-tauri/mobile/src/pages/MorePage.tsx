@@ -1,4 +1,4 @@
-import { PageHead, SectionHead, IconButton } from '../components/ui'
+import { PageHead, SectionHead, IconButton, copyWithToast } from '../components/ui'
 import { Icon, type IconName } from '../components/Icon'
 import { store, useStore } from '../state/store'
 import { apiBase, baseLabel } from '../lib/servers'
@@ -31,11 +31,11 @@ export function MorePage() {
       entries: [
         { id: 'checkin', label: t('签到中心'), icon: 'checkin' },
         { id: 'models', label: t('模型管理'), icon: 'model' },
+        { id: 'routing', label: t('路由组'), icon: 'spark' },
         { id: 'agent', label: t('Agent 配置'), icon: 'agent' },
         { id: 'tools', label: t('工具服务'), icon: 'tools' },
         { id: 'proxies', label: t('网络代理'), icon: 'proxy' },
         { id: 'keys', label: t('网关 Key'), icon: 'key' },
-        { id: 'docs', label: t('接口文档'), icon: 'doc' },
       ],
     },
     {
@@ -171,7 +171,7 @@ export function MorePage() {
               <Icon name='chev' />
             </span>
           </Button>
-          <Button size='default' variant='ghost' type='button' className='m-row h-auto min-h-[52px] w-full justify-start rounded-none border-0 px-3.5 py-3 text-left' onClick={() => store.push('docs')}>
+          <Button size='default' variant='ghost' type='button' className='m-row h-auto min-h-[52px] w-full justify-start rounded-none border-0 px-3.5 py-3 text-left' onClick={() => void copyWithToast(apiBase() + '/v1', t('接口地址'))}>
             <span className='m-logo'>
               <Icon name='doc' />
             </span>
@@ -188,7 +188,7 @@ export function MorePage() {
 
       <div className='m-section' style={{ paddingBottom: 8 }}>
         <Card className='m-card m-card-pad' style={{ fontSize: 11.5, color: 'var(--m-text-3)', lineHeight: 1.7 }}>
-          {t('手机端可管理所连接网关的账号、签到与插件，并使用提供商声明的动态登录入口；其余既有添加入口、编辑凭证和改写客户端配置仍需桌面面板。')}
+          {t('手机端可管理所连接网关的账号、签到与插件，并用提供商声明的动态登录入口登录；自定义提供商的地址、凭证与模型映射同样可以在这里维护。')}
         </Card>
       </div>
     </div>

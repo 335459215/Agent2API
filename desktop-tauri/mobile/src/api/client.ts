@@ -112,9 +112,9 @@ export function hasStoredCredential(): boolean {
   return Boolean(readApiKey() || auth?.access)
 }
 
-/** 401 时由界面接管（弹登录 / 输入 Key）；客户端自己不做跳转 */
-let onAuthLost: ((mode: 'login' | 'key') => void) | null = null
-export function setAuthLostHandler(handler: ((mode: 'login' | 'key') => void) | null): void {
+/** 401 时由界面接管（只弹 API Key 输入）；客户端自己不做跳转 */
+let onAuthLost: ((mode: 'key') => void) | null = null
+export function setAuthLostHandler(handler: ((mode: 'key') => void) | null): void {
   onAuthLost = handler
 }
 
@@ -271,10 +271,8 @@ async function requestApi<T>(path: string, init: RequestInitLite, identity: stri
       requireCurrentServer(identity)
       if (refreshed) return requestApi<T>(path, init, identity, false)
       clearPanelAuth()
-      onAuthLost?.('login')
-    } else if (init.apiKey === undefined) {
-      onAuthLost?.('key')
     }
+    if (init.apiKey === undefined) onAuthLost?.('key')
   }
 
   const envelope = payload as { success?: boolean; data?: unknown; error?: unknown } | null
@@ -324,12 +322,4 @@ export async function probe(base: string): Promise<{ ok: boolean; version?: stri
   } catch {
     return { ok: false }
   }
-}
-
-/** 面板登录状态（决定「登录」还是「创建管理员」） */
-export type PanelStatus = { registered?: boolean; captchaEnabled?: boolean }
-export async function panelStatus(): Promise<PanelStatus> {
-  const response = await fetch(url('/api/panel/status'), { headers: { Accept: 'application/json' } })
-  const payload = (await response.json().catch(() => null)) as { data?: PanelStatus } | null
-  return payload?.data || {}
 }

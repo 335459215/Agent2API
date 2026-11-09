@@ -6,6 +6,8 @@ import { HiddenAccountsNotice } from '../components/HiddenAccountsNotice'
 import { Icon } from '../components/Icon'
 import { AccountSheet } from './AccountSheet'
 import { DynamicProviderSheet } from './add-account-dynamic-sheet'
+import { CustomProviderSheet } from './custom-provider-sheet'
+import { CustomProviderModelsSheet } from './custom-provider-models-sheet'
 import {
   AccountsFilterSheet,
   DEFAULT_FILTERS,
@@ -55,6 +57,9 @@ export function AccountsPage() {
   const [query, setQuery] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
+  const [addingCustom, setAddingCustom] = useState(false)
+  /** 正在编辑模型清单的自定义提供商 id；空串 = 抽屉关着 */
+  const [modelsFor, setModelsFor] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [usage, setUsage] = useState<UsageSnapshot | null>(null)
@@ -259,6 +264,15 @@ export function AccountsPage() {
             <Button size='icon-touch' variant='outline'
               type='button'
               className='m-icon-btn'
+              aria-label={t('新建自定义提供商')}
+              title={t('新建自定义提供商')}
+              onClick={() => setAddingCustom(true)}
+            >
+              <Icon name='plus' />
+            </Button>
+            <Button size='icon-touch' variant='outline'
+              type='button'
+              className='m-icon-btn'
               aria-label={t('筛选')}
               title={t('筛选')}
               onClick={() => setFilterOpen(true)}
@@ -361,6 +375,16 @@ export function AccountsPage() {
                   {limited ? t(' · 限流 {n}', { n: limited }) : ''}
                 </div>
               </div>
+              {/* 自定义家的模型清单：没有它这个提供商转发时全是 404 */}
+              {group.provider.startsWith('custom-') ? (
+                <Button size='sm' variant='ghost'
+                  type='button'
+                  onClick={() => setModelsFor(group.provider)}
+                  style={{ fontSize: 11.5, color: 'var(--m-text-2)', padding: '4px 8px' }}
+                >
+                  {t('模型清单')}
+                </Button>
+              ) : null}
             </div>
             <Card className='m-card'>
               {group.list.map((account, index) => (
@@ -385,6 +409,20 @@ export function AccountsPage() {
         setAdding(false)
         void load()
       }} /> : null}
+      {addingCustom ? <CustomProviderSheet onClose={() => setAddingCustom(false)} onCreated={() => {
+        setAddingCustom(false)
+        void load()
+        void store.refresh(true)
+      }} /> : null}
+      {modelsFor ? <CustomProviderModelsSheet
+        providerId={modelsFor}
+        onClose={() => setModelsFor('')}
+        onSaved={() => {
+          setModelsFor('')
+          void load()
+          void store.refresh(true)
+        }}
+      /> : null}
       <AccountSheet
         account={openAccount}
         onClose={() => setOpenId(null)}

@@ -8,7 +8,8 @@ import { Icon } from '../components/Icon'
 import { PullIndicator, usePullToRefresh } from '../components/PullToRefresh'
 import { store } from '../state/store'
 import { providerLabel } from '../lib/providers'
-import { fetchManage, refreshModels, setModelEnabled, removeModelMapping, type ManageModel, type ManageMapping } from '../api/gateway'
+import { fetchManage, refreshModels, setModelEnabled, removeModelMapping, type ManageMapping, type ManageModel, type ManageView } from '../api/gateway'
+import { ModelEditorSheet } from './model-editor-sheet'
 import { usePolling } from '../lib/usePolling'
 import { t } from '../i18n'
 import { Input, Card, Button, confirmDialog } from '@ui'
@@ -39,6 +40,8 @@ export function ModelsPage() {
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState('')
+  /** 正在编辑（能力位 / 映射）的模型；undefined = 抽屉关着 */
+  const [editing, setEditing] = useState<ManageModel | undefined>(undefined)
   const revision = useRef(0)
   const [refreshResults, setRefreshResults] = useState<Array<{ provider: string; providerLabel?: string; status: string; message?: string }>>([])
 
@@ -349,6 +352,17 @@ export function ModelsPage() {
                           <p className='mt-1 text-[10.5px] text-subtle'>{t('当前通道未声明可用档位，映射等级不会注入；请先获取模型目录。')}</p>
                         ) : null}
                       </div>
+                      <Button
+                        size='sm'
+                        variant='ghost'
+                        type='button'
+                        aria-label={t('编辑能力位与映射')}
+                        title={t('编辑能力位与映射')}
+                        onClick={() => setEditing(model)}
+                        style={{ display: 'flex', padding: 4, border: 0, background: 'none', color: 'var(--m-text-3)' }}
+                      >
+                        <Icon name='edit' style={{ width: 15, height: 15 }} />
+                      </Button>
                       <SwitchSmall
                         checked={Boolean(model.enabled)}
                         disabled={Boolean(busy)}
@@ -366,10 +380,23 @@ export function ModelsPage() {
 
       <div className='m-section' style={{ paddingBottom: 8 }}>
         <Card className='m-card m-card-pad' style={{ fontSize: 11.5, color: 'var(--m-text-3)', lineHeight: 1.7 }}>
-          {t('映射、思考等级、上下文窗口与工具调用能力在桌面端「模型管理」里改；手机端只做启停。')}
+          {t('点模型行右侧的笔，改它的上下文窗口、工具调用等能力位，以及对外别名与思考等级。')}
         </Card>
       </div>
       </div>
+
+      {editing ? (
+        <ModelEditorSheet
+          model={editing}
+          mappings={mappings}
+          onClose={() => setEditing(undefined)}
+          onSaved={view => {
+            setModels(view.models || [])
+            setMappings(view.mappings || [])
+            // 抽屉不关：一次改完能力位再接着加映射是常见连招。
+          }}
+        />
+      ) : null}
     </div>
   )
 }

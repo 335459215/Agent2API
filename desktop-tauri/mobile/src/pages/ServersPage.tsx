@@ -22,7 +22,7 @@ import { Badge } from '@ui'
  */
 export function ServersPage() {
   const { servers, server, stack } = useStore()
-  /** 压栈进来（登录层的「换一台服务器」）而不是首次启动时的整屏 */
+  /** 压栈进来（凭证层的「换一台服务器」）而不是首次启动时的整屏 */
   const stacked = stack.length > 0
   const [editing, setEditing] = useState<string | null>(null)
   const [draftName, setDraftName] = useState('')
@@ -78,10 +78,10 @@ export function ServersPage() {
     setEditing(null)
     setProbed(null)
     store.toast(t('已保存'))
-    // 换到新服务器后立刻拉一次会话；没登录会弹登录层
+    // 换到新服务器后立刻拉一次会话；没凭证会弹网关 API Key 层
     void store.refresh(true).then(() => {
-      // 这一屏是从登录层的「换一台服务器」压进来的：保存完退回原页，
-      // 登录层（需要的话）会重新盖上来，用户不会卡在服务器列表里
+      // 这一屏是从凭证层的「换一台服务器」压进来的：保存完退回原页，
+      // 凭证层（需要的话）会重新盖上来，用户不会卡在服务器列表里
       if (store.get().stack.length > 0) store.back()
     })
   }
@@ -209,7 +209,7 @@ export function ServersPage() {
                     onClick={() => {
                       store.switchServer(entry.id)
                       void store.refresh(true).then(() => {
-                        // 从登录层压进来的：选完这台就退回原页，登录层按新服务器重新弹
+                        // 从凭证层压进来的：选完这台就退回原页，凭证层按新服务器重新弹
                         if (store.get().stack.length > 0) store.back()
                       })
                     }}
@@ -258,7 +258,7 @@ export function ServersPage() {
 
       <div className='m-section' style={{ paddingBottom: 8 }}>
         <Card className='m-card m-card-pad' style={{ fontSize: 11.5, color: 'var(--m-text-3)', lineHeight: 1.7 }}>
-          {t('每台服务器的登录状态各自独立保存，切换后不用重新登录。地址改掉后需要重新登录。')}
+          {t('每台服务器的访问凭证各自独立保存，切换后不用重新认证。地址改掉后需要重新认证。')}
         </Card>
       </div>
     </div>

@@ -294,6 +294,8 @@ export type ManageMapping = {
   provider?: string
   enabled?: boolean
   isDefault?: boolean
+  /** 这条映射绑定的思考等级；`null` / 缺省 = 跟随上游。 */
+  reasoning?: string | null
   /**
    * 这条映射**挂不到任何模型行**（目标上游不在清单里 = `dangling`，
    * `carried: false` 时说明该上游已下线 / 改了 ID）。见桌面端
@@ -302,10 +304,51 @@ export type ManageMapping = {
   dangling?: boolean
   carried?: boolean
 }
-export type ManageView = { models?: ManageModel[]; mappings?: ManageMapping[] }
+export type ManageView = { models?: ManageModel[]; mappings?: ManageMapping[]; reasoningLevels?: Record<string, unknown> }
 
 export function fetchManage(signal?: AbortSignal): Promise<ManageView> {
   return apiCall<ManageView>('/api/models/manage', { signal })
+}
+
+/**
+ * 新增映射 / 改思考等级 / 切开关 —— 三个动作同一个端点。
+ *
+ * `alias` 是对下游暴露的模型 ID，`target` 是上游真实 ID；`alias === target`
+ * 就是给上游原名补一条映射（桌面端「加映射」默认这么填）。`reasoning`
+ * 只在改思考等级时才传（`null` = 恢复跟随上游），`enabled` 只在切开关时才传。
+ */
+export function saveModelMapping(payload: {
+  alias: string
+  target: string
+  provider?: string
+  reasoning?: string | null
+  enabled?: boolean
+}): Promise<ManageView> {
+  return apiCall<ManageView>('/api/models/mappings', { method: 'POST', body: payload })
+}
+
+/**
+ * 覆盖某个模型对下游声明的能力位（只传要改的键，其余保持原样）。
+ *
+ * 值是 `boolean | number | null`：token 键收数字，布尔键收 bool，`null` 表示
+ * 「撤销覆盖、跟随上游」。缺席的键后端当「不动」处理，所以调用方只需传改动项。
+ */
+export function saveModelCapabilities(payload: {
+  provider: string
+  id: string
+  capabilities: Record<string, boolean | number | null>
+}): Promise<ManageView> {
+  return apiCall<ManageView>('/api/models/capabilities', { method: 'POST', body: payload })
+}
+
+/** 登记一个上游目录里没有的模型（自己接的兼容服务常见）。 */
+export function addCustomModel(payload: { provider: string; id: string }): Promise<ManageView> {
+  return apiCall<ManageView>('/api/models/custom', { method: 'POST', body: payload })
+}
+
+/** 撤销上面那条登记。 */
+export function removeCustomModel(payload: { provider: string; id: string }): Promise<ManageView> {
+  return apiCall<ManageView>('/api/models/custom/remove', { method: 'POST', body: payload })
 }
 
 export function setModelEnabled(payload: {
@@ -350,6 +393,13 @@ export type KeysPayload = {
   authRequired?: boolean
   providers?: ProviderSummary[]
   modelsByProvider?: Record<string, string[]>
+  /**
+   * `POST /api/keys` 的返回里独有：刚建好的那把（含明文 `key`）。
+   *
+   * 必须在建完后立刻存进本地 —— 库里一旦有 Key，`/api/*` 全部要鉴权，
+   * 这个面板当场就会被自己关在门外。桌面端靠本机可信绕过，手机端不能。
+   */
+  created?: GatewayKey
 }
 
 export function fetchKeys(signal?: AbortSignal): Promise<KeysPayload> {
@@ -358,6 +408,24 @@ export function fetchKeys(signal?: AbortSignal): Promise<KeysPayload> {
 
 export function setKeyEnabled(id: string, enabled: boolean): Promise<KeysPayload> {
   return apiCall<KeysPayload>(`/api/keys/${encodeURIComponent(id)}`, { method: 'PATCH', body: { enabled } })
+}
+
+/** 新建 Key。`key` 留空则由网关生成；两份白名单都是「不给 = 不限制」。 */
+export function createKey(body: {
+  name?: string
+  key?: string
+  allowedProviders?: string[]
+  allowedModels?: string[]
+}): Promise<KeysPayload> {
+  return apiCall<KeysPayload>('/api/keys', { method: 'POST', body })
+}
+
+/** 改 Key。字段缺席表示「不动」，空数组才是「清空这项限制」。 */
+export function updateKey(
+  id: string,
+  body: { name?: string; enabled?: boolean; allowedProviders?: string[]; allowedModels?: string[] },
+): Promise<KeysPayload> {
+  return apiCall<KeysPayload>(`/api/keys/${encodeURIComponent(id)}`, { method: 'PATCH', body })
 }
 
 export function deleteKey(id: string): Promise<KeysPayload> {
@@ -534,6 +602,20 @@ export function fetchAccountUsage(id: string): Promise<{ results?: UsageRow[]; s
 /** 改备注名（后端 PATCH 支持 name 字段，空串会被 400 拒绝） */
 export function renameAccount(id: string, name: string): Promise<unknown> {
   return apiCall(`/api/accounts/${encodeURIComponent(id)}`, { method: 'PATCH', body: { name } })
+}
+
+/**
+ * 改自定义家账号的凭证与上游地址（只对 `custom-` 前缀的账号有效）。
+ *
+ * 三个键都是「带了才改」：`apiKey: null` 是**清除**凭证，`baseUrl: null`
+ * 是改回跟随提供商（那正是 issue #455 里改不掉旧地址的清理入口）。
+ * 非自定义家传这几个键会被后端 400 挡回，所以调用方必须先判前缀。
+ */
+export function updateAccountCredentials(
+  id: string,
+  patch: { apiKey?: string | null; noAuth?: boolean; baseUrl?: string | null },
+): Promise<unknown> {
+  return apiCall(`/api/accounts/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch })
 }
 
 /** 不传 model 时清除账号冷却与全部模型限流标记。 */

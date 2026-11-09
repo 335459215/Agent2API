@@ -1,16 +1,23 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { PageIntro, IconButton, Empty, ErrorNote, SkeletonList, copyWithToast } from '../components/ui'
 import { GlyphLogo } from '../components/ProviderLogo'
 import { Icon } from '../components/Icon'
 import { PullIndicator, usePullToRefresh } from '../components/PullToRefresh'
 import { store } from '../state/store'
-import { deleteKey, fetchKeys, setKeyEnabled, type GatewayKey, type KeysPayload } from '../api/gateway'
+import {
+  createKey,
+  deleteKey,
+  fetchKeys,
+  setKeyEnabled,
+  updateKey,
+  type GatewayKey,
+  type KeysPayload,
+  type ProviderSummary,
+} from '../api/gateway'
 import { providerLabel } from '../lib/providers'
 import { usePolling } from '../lib/usePolling'
 import { t } from '../i18n'
-import { Card, Button } from '@ui'
-import { Switch as UiSwitch } from '@ui'
-import { confirmDialog } from '@ui'
+import { Button, Card, Input, Label, MultiSelect, Sheet, SheetBody, SheetContent, SheetFooter, SheetHeader, SheetTitle, Switch as UiSwitch, confirmDialog } from '@ui'
 
 /**
  * 网关 Key。
@@ -18,14 +25,16 @@ import { confirmDialog } from '@ui'
  * Key 卡直接展示脱敏后的值与复制按钮 —— 这是这一页最高频的动作（复制给
  * 某个客户端）。明文只在展开后才取，默认只显示掩码，避免肩窥。
  *
- * 可用范围用一行摘要，完整编辑器在桌面端：白名单是多选，窄屏上做多选
- * 既费事又容易点错。
+ * 新建 / 改名字 / 改可用范围都在本页的抽屉里完成：窄屏下多选确实不如桌面
+ * 端顺手，用 MultiSelect + 搜索补偿，而不是把整个动作推给桌面端。
  */
 export function KeysPage() {
   const [data, setData] = useState<KeysPayload | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
   const [revealed, setRevealed] = useState<Set<string>>(new Set())
+  /** undefined = 抽屉关着；null = 新建；对象 = 编辑这一把 */
+  const [editing, setEditing] = useState<GatewayKey | null | undefined>(undefined)
 
   const load = async () => {
     try {
@@ -82,7 +91,13 @@ export function KeysPage() {
   return (
     <div className='m-page' ref={pull.bindRef}>
       <PullIndicator pull={pull.pull} refreshing={pull.refreshing} />
-      <PageIntro actions={<IconButton name='refresh' label={t('刷新')} onClick={() => void load()} />}
+      <PageIntro
+        actions={
+          <>
+            <IconButton name='refresh' label={t('刷新')} onClick={() => void load()} />
+            <IconButton name='plus' label={t('新建 Key')} onClick={() => setEditing(null)} />
+          </>
+        }
       />
 
       <div className='m-section' style={{ marginTop: 0 }}>
@@ -106,7 +121,7 @@ export function KeysPage() {
       {data && !keys.length ? (
         <div className='m-section'>
           <Card className='m-card'>
-            <Empty text={t('还没有 Key。去桌面端「网关 Key」页新建一把。')} />
+            <Empty text={t('还没有 Key。点右上角 + 新建一把。')} />
           </Card>
         </div>
       ) : null}
@@ -177,10 +192,28 @@ export function KeysPage() {
                 <span>{t('创建于 {time}', { time: key.createdAt ? new Date(key.createdAt).toLocaleDateString('zh-CN') : '—' })}</span>
                 <Button size='default' variant='ghost'
                   type='button'
-                  onClick={() => void remove(key)}
+                  onClick={() => setEditing(key)}
                   disabled={busy === id}
                   style={{
                     marginLeft: 'auto',
+                    border: 0,
+                    background: 'none',
+                    color: 'var(--m-text-2)',
+                    fontSize: 11.5,
+                    padding: 0,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
+                  <Icon name='edit' style={{ width: 13, height: 13 }} />
+                  {t('编辑')}
+                </Button>
+                <Button size='default' variant='ghost'
+                  type='button'
+                  onClick={() => void remove(key)}
+                  disabled={busy === id}
+                  style={{
                     border: 0,
                     background: 'none',
                     color: 'var(--m-danger)',
@@ -202,10 +235,193 @@ export function KeysPage() {
 
       <div className='m-section' style={{ paddingBottom: 8 }}>
         <Card className='m-card m-card-pad' style={{ fontSize: 11.5, color: 'var(--m-text-3)', lineHeight: 1.7 }}>
-          {t('新建 Key 与设置可用范围（提供商 / 模型白名单）在桌面端完成。')}
+          {t('可用范围留空表示不限制：这把 Key 能调用所有已启用提供商与模型。填了白名单就只放行勾选的项。')}
         </Card>
       </div>
+
+      {editing !== undefined ? (
+        <KeyEditor
+          item={editing}
+          providers={data?.providers || []}
+          modelsByProvider={data?.modelsByProvider || {}}
+          onClose={() => setEditing(undefined)}
+          onSaved={payload => {
+            setData(payload)
+            setEditing(undefined)
+          }}
+        />
+      ) : null}
     </div>
+  )
+}
+
+/** 新建 / 编辑一把 Key。整份表单在抽屉里，关掉即丢弃草稿。 */
+function KeyEditor({
+  item,
+  providers,
+  modelsByProvider,
+  onClose,
+  onSaved,
+}: {
+  item: GatewayKey | null
+  providers: ProviderSummary[]
+  modelsByProvider: Record<string, string[]>
+  onClose: () => void
+  onSaved: (payload: KeysPayload) => void
+}) {
+  const [name, setName] = useState(item?.name || '')
+  const [value, setValue] = useState('')
+  const [allowedProviders, setAllowedProviders] = useState<string[]>(item?.allowedProviders || [])
+  const [allowedModels, setAllowedModels] = useState<string[]>(item?.allowedModels || [])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const providerOptions = useMemo(
+    () => providers.map(p => ({ value: String(p.id || ''), label: providerLabel(String(p.id || ''), p.label) })).filter(o => o.value),
+    [providers],
+  )
+
+  /**
+   * 模型候选：选了提供商就只列这几家的模型（桌面端同一口径）；一家都没选时
+   * 给全集，方便「只挑几个模型、不限提供商」这种用法。
+   */
+  const modelOptions = useMemo(() => {
+    const sources = allowedProviders.length ? allowedProviders : Object.keys(modelsByProvider)
+    const seen = new Set<string>()
+    const options: { value: string; label: string }[] = []
+    for (const provider of sources) {
+      for (const model of modelsByProvider[provider] || []) {
+        if (seen.has(model)) continue
+        seen.add(model)
+        options.push({ value: model, label: model })
+      }
+    }
+    return options.sort((a, b) => a.label.localeCompare(b.label))
+  }, [allowedProviders, modelsByProvider])
+
+  /** 换提供商后，把不再属于所选范围的模型勾选去掉 —— 否则保存时会被后端 400 挡回。 */
+  const pickProviders = (next: string[]) => {
+    setAllowedProviders(next)
+    if (!next.length || !allowedModels.length) return
+    const allowed = new Set(next.flatMap(id => modelsByProvider[id] || []))
+    const kept = allowedModels.filter(model => allowed.has(model))
+    if (kept.length !== allowedModels.length) setAllowedModels(kept)
+  }
+
+  const save = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const trimmed = name.trim()
+      if (item?.id) {
+        const payload = await updateKey(item.id, { name: trimmed, allowedProviders, allowedModels })
+        store.toast(t('已保存'))
+        onSaved(payload)
+      } else {
+        const payload = await createKey({
+          name: trimmed,
+          key: value.trim() || undefined,
+          allowedProviders,
+          allowedModels,
+        })
+        /**
+         * 建完把这把 Key 存进本地 —— 但**只存不受限的**。
+         *
+         * 库里一旦有 Key，`/api/*` 全都要鉴权；而注册过管理员之后，受限 Key
+         * 还会被管理面直接挡回（`403 management_access_denied`）。把一把带
+         * 白名单的 Key 存成本机凭证，等于让这个面板当场把自己锁在门外 ——
+         * 那种 Key 是发给客户端用的，不是用来开面板的。
+         */
+        const created = payload.created
+        const restricted = Boolean(
+          (created?.allowedProviders?.length) || (created?.allowedModels?.length),
+        )
+        if (created?.key && !restricted) {
+          const { storeApiKey } = await import('../api/client')
+          storeApiKey(created.key)
+          store.toast(t('已创建，本机已自动带上这把 Key'))
+        } else if (created?.key) {
+          store.toast(t('已创建。这是受限 Key，请复制给客户端使用；面板不会自动采用它'), 'warn')
+        } else {
+          store.toast(t('已创建'))
+        }
+        onSaved(payload)
+      }
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Sheet open onOpenChange={(open: boolean) => { if (!open && !busy) onClose() }}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>{item?.id ? t('编辑 Key') : t('新建 Key')}</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div>
+              <Label htmlFor='key-name'>{t('名称')}</Label>
+              <Input
+                id='key-name'
+                value={name}
+                placeholder={t('例如：手机客户端')}
+                onChange={event => setName(event.target.value)}
+              />
+            </div>
+
+            {item?.id ? null : (
+              <div>
+                <Label htmlFor='key-value'>{t('Key 值（留空自动生成）')}</Label>
+                <Input
+                  id='key-value'
+                  value={value}
+                  placeholder={t('缺省由网关生成一串随机 Key')}
+                  onChange={event => setValue(event.target.value)}
+                />
+              </div>
+            )}
+
+            <div>
+              <Label>{t('可用提供商（不选 = 不限）')}</Label>
+              <MultiSelect
+                value={allowedProviders}
+                onValueChange={(items: string[]) => pickProviders(items)}
+                options={providerOptions}
+                placeholder={t('不限提供商')}
+                searchPlaceholder={t('搜索提供商')}
+                emptyHint={t('没有匹配的提供商')}
+                aria-label={t('可用提供商')}
+              />
+            </div>
+
+            <div>
+              <Label>{t('可用模型（不选 = 不限）')}</Label>
+              <MultiSelect
+                value={allowedModels}
+                onValueChange={(items: string[]) => setAllowedModels(items)}
+                options={modelOptions}
+                placeholder={t('不限模型')}
+                searchPlaceholder={t('搜索模型')}
+                emptyHint={t('这个范围内没有模型')}
+                aria-label={t('可用模型')}
+              />
+              <p style={{ fontSize: 11.5, color: 'var(--m-text-3)', lineHeight: 1.6, marginTop: 6 }}>
+                {t('先选提供商，模型候选会跟着收窄；两家都不填就是这把 Key 全放行。')}
+              </p>
+            </div>
+
+            {error ? <ErrorNote text={error} /> : null}
+          </div>
+        </SheetBody>
+        <SheetFooter>
+          <Button variant='outline' disabled={busy} onClick={onClose}>{t('取消')}</Button>
+          <Button disabled={busy} onClick={() => void save()}>{busy ? t('保存中…') : t('保存')}</Button>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -240,4 +456,3 @@ function SwitchSmall({
     <UiSwitch size='touch' variant='success' checked={checked} aria-label={label} disabled={disabled} onCheckedChange={onChange} />
   )
 }
-

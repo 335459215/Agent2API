@@ -147,7 +147,7 @@ export function ToolsPage() {
 
   return <div className='m-page' ref={pull.bindRef}>
     <PullIndicator pull={pull.pull} refreshing={pull.refreshing} />
-    <PageIntro subtitle={t('网络搜索与视觉分析：网关侧配置，改完立即生效。本机客户端的安装在桌面端完成。')}
+    <PageIntro subtitle={t('网络搜索与视觉分析：网关侧配置，改完立即生效。')}
       actions={<IconButton name='refresh' label={t('刷新')} onClick={() => void load()} />} />
     {error ? <ErrorNote text={error} /> : null}
     {loading && !services.length ? <SkeletonList rows={4} height={90} /> : null}
@@ -421,7 +421,7 @@ function VisionDialog({ config, keys, providers, models, onClose, onSaved }: {
             <SelectContent>{keyOptions.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent>
           </Select>
         </div>
-        {!providers.length ? <div style={{ fontSize: 11.5, color: 'var(--m-warn)' }}>{t('还没有可用的提供商，请先在桌面端添加账号并确认有已启用的模型。')}</div> : null}
+        {!providers.length ? <div style={{ fontSize: 11.5, color: 'var(--m-warn)' }}>{t('还没有可用的提供商，请先到「账号」页添加一个并确认有已启用的模型。')}</div> : null}
       </DialogBody>
       <DialogFooter>
         <Button variant='outline' disabled={busy} onClick={onClose}>{t('取消')}</Button>

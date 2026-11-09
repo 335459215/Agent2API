@@ -13,7 +13,7 @@ import './styles/mobile.css'
  * 那套宿主技巧。
  *
  * 401 接管：客户端自己不做跳转（它不知道当前界面在做什么），由这里注册
- * 回调，交给 store 弹「重新登录 / 补 Key」层。
+ * 回调，交给 store 弹「补 Key」层。
  */
 setAuthLostHandler(mode => {
   store.setAuthLost(mode)

@@ -34,6 +34,33 @@ export function isPackaged(): boolean {
 }
 
 /**
+ * 是否跑在 Android APK 的 WebView 里（Minis Ultra 内置面板）。
+ *
+ * ── 为什么不能只看 isPackaged ──────────────────────────────
+ * 那条判据认的是 Capacitor 桥。APK 里的面板 Activity 是自己 new 一个 WebView
+ * 去 loadUrl 网关的 `/m`，没有注入 Capacitor —— 于是 `isPackaged()` 恒为 false。
+ * 结果是「浏览器形态」那几段（安装到桌面、PWA 更新）照常渲染：用户明明已经
+ * 装在 App 里，页面上还写着「浏览器标签页 / 未安装 / 安装到主屏幕」。
+ *
+ * ── 为什么用 UA 而不是别的 ─────────────────────────────────
+ * 这里要答的问题是「外面有没有一层 App」，不是「能不能拿到原生能力」——
+ * 后者才是 Capacitor 该管的。Android WebView 的 UA 必带 `; wv`，
+ * 系统 Chrome / 各家浏览器都不带，这是最省事又不误伤桌面浏览器的信号。
+ * 注意它不区分是不是**我们**的 App（别的 App 内嵌打开也是 wv），
+ * 但那种情况下「安装到桌面」同样没意义，按 App 内处理是对的。
+ */
+export function isAndroidHostedUi(): boolean {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent
+  return /Android/i.test(ua) && /;\s*wv[);]/.test(ua)
+}
+
+/** 「外面已有 App 包着」——原生壳或 APK 内置 WebView 都算 */
+export function isHostedApp(): boolean {
+  return isPackaged() || isAndroidHostedUi()
+}
+
+/**
  * 当前原生平台：`android` / `ios`，浏览器里是 `web`。
  *
  * ── 为什么要区分到这一步 ──────────────────────────────────────

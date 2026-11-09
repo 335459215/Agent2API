@@ -13,6 +13,7 @@ import {
   refreshAccount,
   renameAccount,
   setAccountEnabled,
+  updateAccountCredentials,
   type Account,
   type UsageRow,
 } from '../api/gateway'
@@ -50,6 +51,10 @@ export function AccountSheet({
   const [usageRow, setUsageRow] = useState<UsageRow | undefined>(undefined)
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
+  /** 凭证编辑：只有自定义家（`custom-` 前缀）认 apiKey / noAuth / baseUrl */
+  const [editingCred, setEditingCred] = useState(false)
+  const [apiKeyDraft, setApiKeyDraft] = useState('')
+  const [baseUrlDraft, setBaseUrlDraft] = useState('')
   const open = Boolean(account)
   const accountId = account?.id || ''
   const identity = serverIdentity()
@@ -59,6 +64,9 @@ export function AccountSheet({
   useEffect(() => {
     setEditingName(false)
     setNameDraft('')
+    setEditingCred(false)
+    setApiKeyDraft('')
+    setBaseUrlDraft('')
     setUsageRow(undefined)
     if (!accountId || !account || !supportsUsage(account)) return
     let cancelled = false
@@ -144,6 +152,40 @@ export function AccountSheet({
     }
   }
 
+  /**
+   * 保存自定义家账号的凭证 / 上游地址。
+   *
+   * 只对 `custom-` 前缀的账号开放：内置家的凭证是登录换来的令牌，手填会
+   * 直接坏掉刷新链路，后端也只接受自定义家认这三个键。三个键都按「填了才传」
+   * 处理 —— 空输入表示不动，而不是清空（清空得显式点「清除」）。
+   */
+  const saveCred = async (clear?: 'apiKey' | 'baseUrl') => {
+    if (!account || serverIdentity() !== identity) return
+    const patch: { apiKey?: string | null; baseUrl?: string | null } = {}
+    if (clear === 'apiKey') patch.apiKey = null
+    else if (apiKeyDraft.trim()) patch.apiKey = apiKeyDraft.trim()
+    if (clear === 'baseUrl') patch.baseUrl = null
+    else if (baseUrlDraft.trim()) patch.baseUrl = baseUrlDraft.trim()
+    if (!Object.keys(patch).length) {
+      store.toast(t('没有改动'), 'warn')
+      return
+    }
+    setBusy('cred')
+    try {
+      await updateAccountCredentials(account.id, patch)
+      if (serverIdentity() !== identity) return
+      store.toast(t('凭证已更新'))
+      setEditingCred(false)
+      setApiKeyDraft('')
+      setBaseUrlDraft('')
+      onChanged()
+    } catch (error) {
+      if (serverIdentity() === identity) store.toast(error instanceof Error ? error.message : String(error), 'err')
+    } finally {
+      if (serverIdentity() === identity) setBusy('')
+    }
+  }
+
   /** 不传 model 时同时清除账号冷却和全部模型限流。 */
   const clearLimit = async (model?: string) => {
     if (!account) return
@@ -175,6 +217,13 @@ export function AccountSheet({
   const sortActive = (store.get().session?.accounts?.sorting?.rules[String(account?.provider || '')] || []).some(rule => rule.on)
   const canQueryUsage = Boolean(account && supportsUsage(account))
   const canRefresh = Boolean(account && account.desktop !== true && (account.canRefresh === true || account.hasRefreshToken === true))
+  /**
+   * 只有自定义家（`custom-` 前缀）能改凭证与上游地址。
+   *
+   * 内置家的凭证是登录换来的令牌，手填会把刷新链路写坏；后端也只接受自定义
+   * 家认 `apiKey` / `noAuth` / `baseUrl`，其它家传这几个键直接 400。
+   */
+  const isCustomAccount = String(account?.provider || '').startsWith('custom-')
 
   return (
     <Sheet open={open} onOpenChange={next => { if (!next) onClose() }}>
@@ -331,6 +380,66 @@ export function AccountSheet({
                   </div>
                 </MetricCard>
               </MetricGrid>
+
+              {/* 凭证编辑：只给自定义家。内置家的令牌是登录换来的，手填会写坏刷新链路 */}
+              {isCustomAccount ? (
+                editingCred ? (
+                  <div className='m-rows' style={{ gap: 10 }}>
+                    <div style={{ fontSize: 12, color: 'var(--m-text-3)', lineHeight: 1.6 }}>
+                      {t('留空表示不改动。要清掉现有值，用下面的「清除」。')}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11.5, color: 'var(--m-text-3)', marginBottom: 4 }}>{t('API Key')}</div>
+                      <Input
+                        value={apiKeyDraft}
+                        type='password'
+                        autoComplete='new-password'
+                        placeholder={t('输入新的 Key；留空保持不变')}
+                        onChange={event => setApiKeyDraft(event.currentTarget.value)}
+                      />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11.5, color: 'var(--m-text-3)', marginBottom: 4 }}>{t('上游地址（Base URL）')}</div>
+                      <Input
+                        value={baseUrlDraft}
+                        placeholder={t('例如 https://api.example.com/v1；留空保持不变')}
+                        onChange={event => setBaseUrlDraft(event.currentTarget.value)}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <Button size='touch-sm' variant='outline' type='button' className='m-btn m-ghost m-sm'
+                        disabled={busy === 'cred'} onClick={() => setEditingCred(false)}>
+                        {t('取消')}
+                      </Button>
+                      <Button size='touch-sm' variant='outline' type='button' className='m-btn m-ghost m-sm'
+                        disabled={busy === 'cred'} onClick={() => void saveCred('apiKey')}>
+                        {t('清除 Key')}
+                      </Button>
+                      <Button size='touch-sm' variant='outline' type='button' className='m-btn m-ghost m-sm'
+                        disabled={busy === 'cred'} onClick={() => void saveCred('baseUrl')}>
+                        {t('清除地址')}
+                      </Button>
+                      <Button size='touch-sm' variant='default' type='button' className='m-btn m-sm'
+                        disabled={busy === 'cred'} onClick={() => void saveCred()}>
+                        {busy === 'cred' ? t('保存中…') : t('保存')}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button size='touch' variant='outline'
+                    type='button'
+                    className='m-btn m-ghost w-full'
+                    disabled={Boolean(busy)}
+                    onClick={() => setEditingCred(true)}
+                    style={{ flexDirection: 'column', gap: 2, height: 'auto', padding: '10px 16px' }}
+                  >
+                    <span>{t('编辑凭证与上游地址')}</span>
+                    <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--m-text-3)' }}>
+                      {t('自定义提供商专用')}
+                    </span>
+                  </Button>
+                )
+              ) : null}
 
               {/* 首选是队列位次，不是账号属性：给它一个整行按钮，别混进删除那一排 */}
               <Button size='touch' variant='outline'

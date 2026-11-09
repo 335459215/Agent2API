@@ -4,7 +4,7 @@ name: warm-cache
 #
 # ── 为什么需要单独的预热工作流 ────────────────────────────────
 # GitHub Actions 的缓存按 ref 作用域隔离：tag 触发的构建，缓存存进
-# 「这个 tag 自己」的作用域，它能读的只有本 tag 与默认分支 main ——
+# 「这个 tag 自己」的作用域，它能读的只有本 tag 与默认分支 dev ——
 # 「别的 tag」存过的缓存永远读不到（官方文档：Workflow runs also
 # cannot restore caches created for different tag names）。
 # build.yml / docker.yml 只在 tag push 与手动触发时运行，缓存从未
@@ -50,7 +50,7 @@ name: warm-cache
 
 on:
   push:
-    branches: [main]
+    branches: [dev]
   schedule:
     - cron: '0 19 * * 1'
   workflow_dispatch:

@@ -1,24 +1,19 @@
 name: Sync from upstream
 
-# 把上游 aimod-cc/Agent2API 的 main 跟进到本 fork。
+# 两分支模型：
+#   main —— 上游镜像。内容与 aimod-cc/Agent2API 的 main 完全一致（同一 SHA），
+#           不带任何本地改动。由本任务强制对齐。
+#   dev  —— 全部本地改动所在分支（打包脚本、构建钩子、面板精简等）。本任务把 dev
+#           rebase 到新的 main 之上，本地提交永远在顶部。
 #
-# ── 为什么用 rebase 而不是 merge ────────────────────────────
-# fork 里可能有本地提交（打包脚本、构建钩子、版本号绑定）。rebase 把
-# **本地提交重放到上游最新提交之上**，所以本地改动永远在上面，不会被
-# 上游覆盖；merge 则会产生交叉历史，反复同步后很难看出哪些是本地改动。
+# 为什么默认分支是 dev：GitHub 的 schedule 只在**默认分支**上读取 workflow。同步
+# 脚本本身是本地新增文件，放进 main 就会让 main 不再是纯上游，所以脚本住在 dev。
 #
-# ── 冲突时怎么办 ────────────────────────────────────────────
-# 自动 rebase 冲突就**中止并报错**，不强推、不留半成品。手动解一次之后
-# 会恢复自动同步。这是有意的：宁可停一天，也不要把仓库搞成推不动的状态。
-#
-# ── 保护分支 ────────────────────────────────────────────────
-# 如果给 main 加了保护规则（或 ruleset 要求 PR），这里的 push 会被拒。
-# 那种情况下把 PAT 换成能绕过保护的 token，或者把同步目标改成
-# `sync/upstream` 分支 + 自动开 PR。默认按无保护处理。
+# 冲突时中止并报错，不强推、不留半成品。手动解一次冲突后恢复自动同步。
 
 on:
   schedule:
-    # 每 6 小时一次，错开整点（GitHub 的定时队列在整点最堵）
+    # 每 6 小时一次，错开整点
     - cron: "37 */6 * * *"
   workflow_dispatch:
     inputs:
@@ -26,7 +21,7 @@ on:
         description: "上游仓库（owner/repo）"
         required: false
         default: "aimod-cc/Agent2API"
-      branch:
+      upstream_branch:
         description: "上游分支"
         required: false
         default: "main"
@@ -43,22 +38,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout
+      - name: Checkout dev
         uses: actions/checkout@v4
         with:
-          # 必须全量历史：rebase 需要共同祖先，depth=1 会让 merge-base 失败
+          ref: dev
           fetch-depth: 0
-          # 用 PAT 而不是 GITHUB_TOKEN：内置 token **永远**没有 `workflow`
-          # 权限，上游一改 .github/workflows/* 就会被拒：
+          # 用 PAT 而不是 GITHUB_TOKEN：内置 token **永远**没有 workflow 权限，
+          # 上游一改 .github/workflows/* 就会被拒：
           #   refusing to allow a GitHub App to create or update workflow
           #   `…/frontend-artifacts.yml` without `workflows` permission
-          # 同步必然失败。SYNC_TOKEN 是带 workflow scope 的 PAT。
           token: ${{ secrets.SYNC_TOKEN }}
 
-      - name: Rebase onto upstream
+      - name: Mirror upstream into main
         env:
           UPSTREAM: ${{ inputs.upstream || 'aimod-cc/Agent2API' }}
-          BRANCH: ${{ inputs.branch || 'main' }}
+          UPSTREAM_BRANCH: ${{ inputs.upstream_branch || 'main' }}
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
@@ -67,41 +61,34 @@ jobs:
           git remote add upstream "https://github.com/${UPSTREAM}.git"
           git fetch --no-tags --prune upstream "+refs/heads/*:refs/remotes/upstream/*"
 
-          echo "上游：${UPSTREAM}  分支：${BRANCH}"
+          SRC="refs/remotes/upstream/${UPSTREAM_BRANCH}"
+          echo "上游：${UPSTREAM}  分支：${UPSTREAM_BRANCH}  ->  $(git rev-parse --short "$SRC")"
 
-          if ! git rev-parse --verify "refs/remotes/upstream/${BRANCH}" >/dev/null 2>&1; then
-            echo "::error::上游不存在分支 ${BRANCH}"
+          if ! git rev-parse --verify "$SRC" >/dev/null 2>&1; then
+            echo "::error::上游不存在分支 ${UPSTREAM_BRANCH}"
             exit 1
           fi
 
-          # 已经包含上游 → 无事可做。注意方向：是「上游是 HEAD 的祖先」。
-          if git merge-base --is-ancestor "refs/remotes/upstream/${BRANCH}" HEAD; then
-            echo "已是最新，无需同步。"
+          # main 是纯镜像：直接指向上游提交。
+          git push --force origin "${SRC}:refs/heads/main"
+          echo "main 已对齐上游：$(git rev-parse --short "$SRC")"
+
+      - name: Rebase dev onto main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "dev 已包含 main，无需 rebase。"
             exit 0
           fi
 
-          BEHIND=$(git rev-list --count "HEAD..refs/remotes/upstream/${BRANCH}")
-          LOCAL=$(git rev-list --count "refs/remotes/upstream/${BRANCH}..HEAD")
-          echo "落后 ${BEHIND} 个提交，本地独有 ${LOCAL} 个提交；开始 rebase。"
-
-          if git rebase "refs/remotes/upstream/${BRANCH}"; then
-            # --force-with-lease 而不是 --force：远端被别人推过就失败，
-            # 不会静默覆盖别人的提交。
-            git push --force-with-lease origin "HEAD:refs/heads/${BRANCH}"
-            echo "同步完成：$(git rev-parse --short HEAD)"
+          echo "dev 落后 main $(git rev-list --count HEAD..origin/main) 个提交，开始 rebase。"
+          if git rebase origin/main; then
+            git push --force-with-lease origin "HEAD:refs/heads/dev"
+            echo "dev 已跟到：$(git rev-parse --short HEAD)"
           else
             git rebase --abort || true
-            echo "::error::与上游冲突，自动同步已中止。手动 rebase 解决一次后会自动恢复。"
-            echo "本地可复现：git fetch https://github.com/${UPSTREAM}.git ${BRANCH} && git rebase FETCH_HEAD"
+            echo "::error::dev 与上游冲突，自动同步已中止。手动解一次冲突后恢复自动同步。"
             exit 1
           fi
-
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "### 上游跟进结果"
-            echo ""
-            echo "- 当前 HEAD: \`$(git rev-parse --short HEAD)\`"
-            echo "- 上游分支: \`${GITHUB_REPOSITORY}\`"
-          } >> "$GITHUB_STEP_SUMMARY"

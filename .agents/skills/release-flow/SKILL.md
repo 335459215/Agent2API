@@ -11,7 +11,7 @@ description: Agent2API（workbuddy）仓库的协作与发版规范 —— 分�
 
 下列两件事**必须由人先审过、明确点头**，代理才能继续；可以准备草稿、可以列依据，不能自己拍板往下走：
 
-1. **发版**：进入发版流程（改版本号、建发布提交、推 main / beta、打 tag、挂 Release）之前，先把版本号与「这次要发什么」讲清楚，等用户确认。**未经确认不得推任何分支或 tag** —— tag 一旦推出去就会触发构建、产出公开的安装包与镜像，收不回来。
+1. **发版**：进入发版流程（改版本号、建发布提交、推 main / dev、打 tag、挂 Release）之前，先把版本号与「这次要发什么」讲清楚，等用户确认。**未经确认不得推任何分支或 tag** —— tag 一旦推出去就会触发构建、产出公开的安装包与镜像，收不回来。
 2. **更新日志**：写好的日志（发布提交的提交信息，同时也是 GitHub Release 正文）必须先给用户逐条过目。用户要求改措辞、增删条目、调整分类前缀时，按反馈改完要**再确认一次**，不能因为「改得不多」就直接提交。
 
 一次发版里两条同时适用：既要有版本号的确认，也要有日志的确认；用户说「继续」之后才动手。
@@ -71,18 +71,24 @@ git push origin vX.Y.Z
 
 `app.repo` 必须是 `owner/repo` 形式；写成 URL 或带空格会被当成无效值，静默回落到内置默认值。
 
-## 1. 分支落脚点：日常只碰 beta，发版才动 main
+## 1. 分支落脚点：日常只碰 dev，发版才动 main
 
 | 分支 | 角色 | 什么时候动它 |
 |---|---|---|
-| `beta` | 集成分支（默认落脚点） | 日常修改、合并 PR、解冲突 —— 一律先到这里 |
-| `main` | 发版分支 | 只在构建发版时：切 main、把 beta 合进来、打 tag |
+| `dev` | 集成分支（默认落脚点） | 日常修改、合并 PR、解冲突 —— 一律先到这里 |
+| `main` | 发版分支 | 只在构建发版时：切 main、把 dev 合进来、打 tag |
 
-- **合并 PR 时 base 选 `beta`**，不要选 `main`。合进 `main` 等于把还没发布的改动提前塞进发版分支；之后还得反过来把 main 合回 beta，平白多一次合并提交、多一次冲突机会。已经把 PR 开成 base=main 的，先在 PR 页面把 base 改成 `beta` 再合。
-- **本地改动也提交到 `beta`**（写代码、改文档、解冲突都算），推 `origin/beta`；合并结果的核对、构建自检都在 beta 上做完。
-- **只有正式发版才切 `main`**：`git switch main` → 把 beta 合进来 → 写发布提交、推 main、打 tag；tag 必须落在 `main` 上。发完版 beta 再把 main 合回来，两边保持一致。
+> **本仓库没有 `beta` 分支** —— 远程只有 `dev` 与 `main`。历史上文档曾把集成
+> 分支写作 `beta`，照那份文档推会把改动送进一个不存在的分支。CI 的
+> `frontend-artifacts.yml` / `warm-cache.yml` 也已经是 `branches: [dev]`。
+> 下文出现的「beta 版」一律指**预发布渠道**（semver 的 `-beta.N` 与 Docker 的
+> `:beta` 标签），与分支无关。
+
+- **合并 PR 时 base 选 `dev`**，不要选 `main`。合进 `main` 等于把还没发布的改动提前塞进发版分支；之后还得反过来把 main 合回 dev，平白多一次合并提交、多一次冲突机会。已经把 PR 开成 base=main 的，先在 PR 页面把 base 改成 `dev` 再合。
+- **本地改动也提交到 `dev`**（写代码、改文档、解冲突都算），推 `origin/dev`；合并结果的核对、构建自检都在 dev 上做完。
+- **只有正式发版才切 `main`**：`git switch main` → 把 dev 合进来 → 写发布提交、推 main、打 tag；tag 必须落在 `main` 上。发完版 dev 再把 main 合回来，两边保持一致。
 - **不要自作主张选落脚分支**：用户没说要发版，就不要往 `main` 提交 / 推送，也不要把 PR 的 base 改成 `main`。
-- beta 版（预发布）是唯一例外：不切 `main`，tag 直接落在 `beta` 分支自己身上（见第 6 节）。
+- beta 版（预发布）是唯一例外：不切 `main`，tag 直接落在 `dev` 分支自己身上（见第 6 节）。
 
 ## 2. 合并 PR：保留贡献者署名
 
@@ -137,9 +143,9 @@ GitHub 的归属规则只有一条：**提交头里的 author 邮箱出现在某
 git status --short        # 必须为空；有改动就先提交或清理
 cargo check               # 或前端有改动时做一次构建自检
 
-# 2. 切到 main 并把 beta 合进来
+# 2. 切到 main 并把 dev 合进来
 git switch main && git pull
-git merge beta
+git merge dev
 
 # 3. 六处版本号一起改（默认末位 +1，幅度听用户）；改完刷新 Cargo.lock
 cargo check
@@ -251,22 +257,22 @@ bash scripts/release.sh vX.Y.Z
 
 应用里有「设置 → 软件更新 → 更新设置 → **加入 beta 版**」开关：**打开的人才收到 beta 更新，没打开的人只看正式发布。**
 
-beta 版不是另一条流水线，而是第 5 节流程的一个变体 —— 唯一结构差别是「**从 `beta` 分支打带预发布后缀的 tag**」，提交、tag、Release、验收逐字照旧。第 0 节的两条红线同样适用。
+beta 版不是另一条流水线，而是第 5 节流程的一个变体 —— 唯一结构差别是「**从 `dev` 分支打带预发布后缀的 tag**」，提交、tag、Release、验收逐字照旧。第 0 节的两条红线同样适用。
 
 ```bash
-# 1. 在 beta 分支上动手（beta 版不碰 main）
-git switch beta && git pull
+# 1. 在 dev 分支上动手（beta 版不碰 main）
+git switch dev && git pull
 git status --short          # 必须为空
 
 # 2. 六处版本号一起改成「与 tag 逐字一致」的形态：
 #    tag 打 v3.1.0-beta.1 → 六处都写 3.1.0-beta.1（清单见第 4 节）
 cargo check                 # 顺带刷新 Cargo.lock
 
-# 3. 提交并推 beta 分支（提交信息 = 这次的 beta 更新日志，格式同第 5 节）
+# 3. 提交并推 dev 分支（提交信息 = 这次的 beta 更新日志，格式同第 5 节）
 git commit -am "…beta 版日志…"
-git push origin beta
+git push origin dev
 
-# 4. 打 tag 并推：tag 落在 beta 分支的提交上
+# 4. 打 tag 并推：tag 落在 dev 分支的提交上
 git tag v3.1.0-beta.1
 git push origin v3.1.0-beta.1
 
@@ -283,7 +289,7 @@ gh run list --repo Agent2Builder/agent2api-releases --limit 4
 
 1. **六处版本号漏了后缀**（写成 `3.1.0`）：比较是按 semver 做的，运行版本 `3.1.0` 对线上 tag `3.1.0-beta.1` 会判成「当前比线上新」，**beta 用户永远收不到更新**。六个文件都接受带后缀的版本号（Cargo / npm / tauri.conf.json 都认），照 tag 抄即可。APK 的 `versionCode` 由 semver 前三段折算、不带后缀（见 `android/variables.gradle`），beta 与同号正式版取同一个值，不构成冲突。
 2. **Release 漏标 pre-release**：标记就是开关的分界线，正式通道排除预发布。自动发布根据 semver 预发布后缀判定；应急脚本也会设置。若已有公开版本的标记不一致，自动流程明确失败，不擅自改写。
-3. **tag 打在 `main` 上**：beta 是集成分支，beta 版要的是它的快照。打在 `main` 上要么不含 beta 分支的新改动（白测一场），要么等于把还没发布的改动提前推进 `main`。
+3. **tag 打在 `main` 上**：dev 是集成分支，beta 版要的是它的快照。打在 `main` 上要么不含 dev 分支的新改动（白测一场），要么等于把还没发布的改动提前推进 `main`。
 
 构建仓库 `.github/workflows/docker.yml` 发布 beta 时同时产出完整版本标签（如 `3.3.0-beta.3`）与滚动 `:beta`，**不移动 `:latest`**。Docker 用户用 `aimodcc/agent2api:beta` 跟随 beta，或用完整版本号固定版本；手动 dev 构建不会移动 `:beta`。
 

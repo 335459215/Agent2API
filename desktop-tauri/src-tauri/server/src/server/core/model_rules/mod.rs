@@ -227,10 +227,13 @@ impl CustomModel {
     /// 是否命中 `(provider, id)`（都忽略大小写）。
     ///
     /// `pub`：管理页判「来源 = 手动」时要在 `catalog` 侧按同一口径比对
-    /// （见 `catalog::manage_entries`）—— 在那里另写一遍忽略大小写的比较，
-    /// 迟早会与这里的口径分叉。
+    /// （见 `catalog::manage_entries`）—— 在那里另写一遍比较，迟早会与这里分叉。
+    ///
+    /// **id 是精确比较**：自定义模型的 id 就是对外模型名，而对外名区分大小写
+    /// （`glm-5.3-flash` 与 `GLM-5.3-Flash` 是两个模型）。provider 侧仍忽略
+    /// 大小写 —— 那是内部标识，用户看不到。
     pub fn matches(&self, provider: &str, id: &str) -> bool {
-        self.provider.eq_ignore_ascii_case(provider) && self.id.eq_ignore_ascii_case(id)
+        self.provider.eq_ignore_ascii_case(provider) && self.id == id
     }
 }
 
@@ -521,7 +524,7 @@ impl ModelRules {
     /// 精确提供商规则覆盖旧版全局规则，包括显式关闭的条目。
     pub fn binding(&self, provider: &str, alias: &str, target: &str) -> Option<&Mapping> {
         let matches = |m: &&Mapping| {
-            m.alias.eq_ignore_ascii_case(alias) && m.target.eq_ignore_ascii_case(target)
+            m.alias == alias && m.target == target
         };
         self.mappings.iter().filter(matches)
             .find(|m| m.provider.as_deref().is_some_and(|owner| owner.eq_ignore_ascii_case(provider)))
@@ -550,13 +553,13 @@ impl ModelRules {
     pub fn mappings_of(&self, model: &str) -> Vec<&Mapping> {
         self.mappings
             .iter()
-            .filter(|m| m.enabled && m.alias.eq_ignore_ascii_case(model))
+            .filter(|m| m.enabled && m.alias == model)
             .collect()
     }
 
     /// 该对外名是否已存在任何映射条目（种子防抢占判断用）。
     pub fn has_alias(&self, alias: &str) -> bool {
-        self.mappings.iter().any(|m| m.alias.eq_ignore_ascii_case(alias))
+        self.mappings.iter().any(|m| m.alias == alias)
     }
 
     /// 某条映射的对外名：target 归属 `provider`（None = 旧版全局条目）。
@@ -572,7 +575,7 @@ impl ModelRules {
     pub fn aliases_of(&self, provider: &str, target: &str) -> Vec<&str> {
         self.mappings
             .iter()
-            .filter(|m| m.target.eq_ignore_ascii_case(target))
+            .filter(|m| m.target == target)
             .filter(|m| m.provider.as_deref().map_or(true, |p| p.eq_ignore_ascii_case(provider)))
             .map(|m| m.alias.as_str())
             .collect()
@@ -593,8 +596,8 @@ impl ModelRules {
         let mut out: Vec<&str> = Vec::new();
         for m in &self.mappings {
             if m.enabled
-                && m.target.eq_ignore_ascii_case(target)
-                && !out.iter().any(|a| m.alias.eq_ignore_ascii_case(*a))
+                && m.target == target
+                && !out.iter().any(|a| m.alias == *a)
             {
                 out.push(m.alias.as_str());
             }

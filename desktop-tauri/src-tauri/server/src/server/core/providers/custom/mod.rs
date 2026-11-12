@@ -31,13 +31,15 @@ pub(crate) fn catalog_providers(store: &AccountStore) -> Vec<(String, Vec<Value>
 }
 
 pub fn append_models_response(store: &AccountStore, scope: Option<&KeyScope>, data: &mut Vec<Value>) {
+    // 已占用的对外名按**原样**存：对外名区分大小写，`GLM-5.3-Flash` 与
+    // `glm-5.3-flash` 是两个不同的模型，折叠大小写会把后者静默吞掉。
     let mut claimed: std::collections::HashSet<_> = data.iter()
-        .map(|item| model_id(item).to_lowercase()).collect();
+        .map(model_id).collect();
     for (provider, models) in catalog_providers(store) {
         if !key_scope::allows_provider(scope, &provider) { continue; }
         for model in models {
             let id = model_id(&model);
-            if key_scope::allows_model(scope, &id) && claimed.insert(id.to_lowercase()) {
+            if key_scope::allows_model(scope, &id) && claimed.insert(id.clone()) {
                 data.push(list_item(&model, &provider));
             }
         }

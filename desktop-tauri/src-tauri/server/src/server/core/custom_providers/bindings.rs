@@ -13,9 +13,9 @@ use crate::server::errors::GatewayError;
 pub(super) fn normalize(models: &mut [Value], mappings: &mut Vec<Value>) {
     for model in models.iter_mut() {
         let id = model_id(model);
+        // 精确：只有同名同字才是「这条模型的历史自映射」
         if let Some(legacy) = mappings.iter().find(|mapping| {
-            text(mapping, "alias").eq_ignore_ascii_case(&id)
-                && text(mapping, "target").eq_ignore_ascii_case(&id)
+            text(mapping, "alias") == id && text(mapping, "target") == id
         }) {
             model["enabled"] = Value::Bool(enabled(model) && enabled(legacy));
             if !text(legacy, "reasoning").is_empty() {
@@ -23,25 +23,28 @@ pub(super) fn normalize(models: &mut [Value], mappings: &mut Vec<Value>) {
             }
         }
     }
+    // 自映射（alias 与上游名完全一致）= 默认绑定，由模型行本身表达，不留在 mappings 里。
+    // 精确比较：大小写不同的别名是另一条映射，不能当成自映射丢掉。
     mappings.retain(|mapping| {
-        !(text(mapping, "alias").eq_ignore_ascii_case(text(mapping, "target"))
+        !(text(mapping, "alias") == text(mapping, "target")
             && models
                 .iter()
-                .any(|model| model_id(model).eq_ignore_ascii_case(text(mapping, "target"))))
+                .any(|model| model_id(model) == text(mapping, "target")))
     });
+    // 已占用的对外名。原样存，不折叠大小写 —— 见 bindings() 的说明。
     let mut claimed = models
         .iter()
         .filter(|model| enabled(model))
-        .map(|model| model_id(model).to_ascii_lowercase())
+        .map(model_id)
         .collect::<HashSet<_>>();
     for carried in [true, false] {
         for mapping in mappings.iter_mut().filter(|mapping| {
             models
                 .iter()
-                .any(|model| model_id(model).eq_ignore_ascii_case(text(mapping, "target")))
+                .any(|model| model_id(model) == text(mapping, "target"))
                 == carried
         }) {
-            if enabled(mapping) && !claimed.insert(text(mapping, "alias").to_ascii_lowercase()) {
+            if enabled(mapping) && !claimed.insert(text(mapping, "alias").to_string()) {
                 mapping["enabled"] = Value::Bool(false);
             }
         }
@@ -59,21 +62,22 @@ fn enabled(value: &Value) -> bool {
         .unwrap_or(true)
 }
 
+/// 收集「(对外名, 上游名, 是否启用)」三元组，用于冲突判定。
+///
+/// **不做大小写折叠**：对外名是客户端可见的模型 ID，调用侧按精确名匹配，
+/// `GLM-5.3-Flash` 与 `glm-5.3-flash` 是两个不同的模型，不该互相判冲突。
+/// （折叠成小写会让后者被当成前者的重复，报「不能同时启用多个绑定」。）
 fn bindings(models: &[Value], mappings: &[Value]) -> Vec<(String, String, bool)> {
     models
         .iter()
         .map(|model| {
             let id = model_id(model);
-            (
-                id.to_ascii_lowercase(),
-                id.to_ascii_lowercase(),
-                enabled(model),
-            )
+            (id.clone(), id, enabled(model))
         })
         .chain(mappings.iter().map(|mapping| {
             (
-                text(mapping, "alias").to_ascii_lowercase(),
-                text(mapping, "target").to_ascii_lowercase(),
+                text(mapping, "alias").to_string(),
+                text(mapping, "target").to_string(),
                 enabled(mapping),
             )
         }))
@@ -120,11 +124,11 @@ pub(super) fn validate_change(
     for mapping in mappings {
         if !models
             .iter()
-            .any(|model| model_id(model).eq_ignore_ascii_case(text(mapping, "target")))
+            .any(|model| model_id(model) == text(mapping, "target"))
         {
             let previous = old_mappings.iter().find(|old| {
-                text(old, "alias").eq_ignore_ascii_case(text(mapping, "alias"))
-                    && text(old, "target").eq_ignore_ascii_case(text(mapping, "target"))
+                text(old, "alias") == text(mapping, "alias")
+                    && text(old, "target") == text(mapping, "target")
             });
             if previous.is_none()
                 || (enabled(mapping) && previous.is_some_and(|previous| !enabled(previous)))
@@ -163,17 +167,17 @@ pub fn resolve(provider: &Value, requested: &str) -> Option<(String, Option<Stri
     };
     if let Some(model) = models
         .iter()
-        .find(|model| model_id(model).eq_ignore_ascii_case(requested))
+        .find(|model| model_id(model) == requested)
     {
         let default = mappings.iter().find(|mapping| {
             mapping
                 .get("alias")
                 .and_then(Value::as_str)
-                .is_some_and(|alias| alias.eq_ignore_ascii_case(requested))
+                .is_some_and(|alias| alias == requested)
                 && mapping
                     .get("target")
                     .and_then(Value::as_str)
-                    .is_some_and(|target| target.eq_ignore_ascii_case(requested))
+                    .is_some_and(|target| target == requested)
         });
         if model
             .get("enabled")
@@ -195,8 +199,7 @@ pub fn resolve(provider: &Value, requested: &str) -> Option<(String, Option<Stri
     mappings.iter().find_map(|mapping| {
         let alias = mapping.get("alias")?.as_str()?;
         let target = mapping.get("target")?.as_str()?;
-        if !alias.eq_ignore_ascii_case(requested)
-            || alias.eq_ignore_ascii_case(target)
+        if alias != requested || alias == target
             || !mapping
                 .get("enabled")
                 .and_then(Value::as_bool)
@@ -207,7 +210,7 @@ pub fn resolve(provider: &Value, requested: &str) -> Option<(String, Option<Stri
         // target 的 enabled 只控制原始 ID，不能阻止别名调用它。
         let model = models
             .iter()
-            .find(|model| model_id(model).eq_ignore_ascii_case(target))?;
+            .find(|model| model_id(model) == target)?;
         Some((model_id(model), level(mapping)))
     })
 }
@@ -248,7 +251,7 @@ pub fn public_models(provider: &Value) -> Vec<Value> {
         if name.is_empty()
             || result
                 .iter()
-                .any(|model| model_id(model).eq_ignore_ascii_case(&name))
+                .any(|model| model_id(model) == name)
         {
             continue;
         }
@@ -259,7 +262,7 @@ pub fn public_models(provider: &Value) -> Vec<Value> {
         let capabilities = capability::normalize_object(
             models
                 .iter()
-                .find(|model| model_id(model).eq_ignore_ascii_case(&target))
+                .find(|model| model_id(model) == target)
                 .and_then(|model| model.get("capabilities")),
         );
         capability::apply_overrides(&mut item, &capabilities);

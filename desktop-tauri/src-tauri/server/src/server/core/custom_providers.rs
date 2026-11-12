@@ -496,7 +496,9 @@ fn model_entries_of(value: Option<&Value>) -> Vec<Value> {
         if id.is_empty() {
             continue;
         }
-        if entries.iter().any(|model| model_id(model).eq_ignore_ascii_case(&id)) {
+        // 精确比较：对外模型名区分大小写，`GLM-5.3-Flash` 与 `glm-5.3-flash`
+        // 是两个模型。折叠大小写会让后者在回读时被静默丢弃。
+        if entries.iter().any(|model| model_id(model) == id) {
             continue;
         }
         let mut entry = json!({
@@ -1067,11 +1069,13 @@ fn validate_model_entries(raw: &[Value]) -> Result<Vec<Value>, String> {
             Some(Value::Bool(enabled)) => *enabled,
             Some(_) => return Err(format!("models 第 {} 项的 enabled 必须是布尔值", position + 1)),
         };
+        // 精确比较：`GLM-5.3-Flash` 与 `glm-5.3-flash` 是两个不同的对外模型名，
+        // 调用侧也是按精确名匹配的（见 model_rules::binding 的口径）。
         let duplicated = entries.iter().any(|known| {
             known
                 .get("id")
                 .and_then(Value::as_str)
-                .is_some_and(|text| text.eq_ignore_ascii_case(id))
+                .is_some_and(|text| text == id)
         });
         if duplicated {
             return Err(format!("模型 ID「{id}」已存在，请勿重复登记"));

@@ -49,7 +49,7 @@ fn public_builtin_items(active: &[(String, Vec<Value>)]) -> Vec<(String, Value)>
             let Some(wire) = builtin_target(&rules, provider, manifest, &name) else { continue };
             let Some(upstream) = manifest.iter().find(|item| model_id(item) == wire.model) else { continue };
             let mut item = list_item(upstream, provider);
-            if let Some(index) = claimed.get(&name.to_lowercase()).copied() {
+            if let Some(index) = claimed.get(&name).copied() {
                 let existing = &mut result[index].1;
                 if item.get("supports_image_generation").and_then(Value::as_bool) == Some(true)
                     && existing.get("kind").and_then(Value::as_str) == Some("image")
@@ -63,7 +63,7 @@ fn public_builtin_items(active: &[(String, Vec<Value>)]) -> Vec<(String, Value)>
                 }
                 continue;
             }
-            claimed.insert(name.to_lowercase(), result.len());
+            claimed.insert(name.clone(), result.len());
             if let Some(object) = item.as_object_mut() {
                 object.insert("id".to_string(), Value::String(name.clone()));
                 if !name.eq_ignore_ascii_case(&wire.model) {
@@ -179,7 +179,7 @@ fn push_managed_model(
     if id.is_empty() {
         return;
     }
-    if !claimed.insert((provider.to_string(), id.to_lowercase())) {
+    if !claimed.insert((provider.to_string(), id.clone())) {
         return; // 同家同 id 的重复条目（见 `manage_view` 里 claimed 的说明）
     }
     let default = rules.binding(provider, &id, &id);
@@ -191,12 +191,15 @@ fn push_managed_model(
     }));
     let mut aliases = Vec::new();
     for (index, mapping) in rules.mappings.iter().enumerate() {
-        if !mapping.target.eq_ignore_ascii_case(&id)
+        if mapping.target != id
             || !mapping.provider.as_deref().map_or(true, |owner| owner.eq_ignore_ascii_case(provider))
         { continue; }
         attached.insert(index);
-        if mapping.alias.eq_ignore_ascii_case(&id)
-            || aliases.iter().any(|alias: &String| alias.eq_ignore_ascii_case(&mapping.alias))
+        // 只跳过**逐字等于**模型 id 的自映射（那是默认绑定本身，已单独渲染）。
+        // 大小写不同的别名是另一条真实映射，必须显示出来 —— 藏了它就变成
+        // 「界面看不见、再加又报已存在」的死结。
+        if mapping.alias == id
+            || aliases.iter().any(|alias: &String| alias == &mapping.alias)
         { continue; }
         let Some(effective) = rules.binding(provider, &mapping.alias, &id) else { continue };
         aliases.push(mapping.alias.clone());
@@ -292,7 +295,7 @@ pub(crate) fn host_row_exists(store: &AccountStore, provider: Option<&str>, targ
         .into_iter()
         .any(|(owner, manifest)| {
             provider.map_or(true, |provider| owner.eq_ignore_ascii_case(provider))
-                && manifest.iter().any(|item| model_id(item).eq_ignore_ascii_case(target))
+                && manifest.iter().any(|item| model_id(item) == target)
         })
 }
 
@@ -354,7 +357,7 @@ pub fn manage_view(store: &AccountStore) -> Value {
         mappings.push(json!({
             "alias": mapping.alias, "target": mapping.target, "provider": mapping.provider,
             "enabled": enabled, "reasoning": mapping.reasoning,
-            "isDefault": mapping.alias.eq_ignore_ascii_case(&mapping.target),
+            "isDefault": mapping.alias == mapping.target,
             "dangling": true, "carried": carried,
         }));
     }

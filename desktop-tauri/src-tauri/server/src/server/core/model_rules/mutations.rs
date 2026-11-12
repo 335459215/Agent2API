@@ -103,12 +103,12 @@ pub fn add_mapping(
                     })
                     .cloned()
             });
-        if create == Some(true) && (alias.eq_ignore_ascii_case(target) || existing.is_some()) {
+        if create == Some(true) && (alias == target || existing.is_some()) {
             return Err(conflict(format!(
                 "模型 ID「{alias}」已绑定到此上游模型，请直接使用已有绑定"
             )));
         }
-        if create == Some(false) && existing.is_none() && !alias.eq_ignore_ascii_case(target) {
+        if create == Some(false) && existing.is_none() && alias != target {
             return Err(GatewayError::with_status(
                 404,
                 format!("映射不存在: {alias} → {target}"),
@@ -117,7 +117,7 @@ pub fn add_mapping(
         if create != Some(true)
             && existing.is_none()
             && enabled == Some(false)
-            && !alias.eq_ignore_ascii_case(target)
+            && alias != target
         {
             return Err(GatewayError::with_status(
                 404,
@@ -130,7 +130,7 @@ pub fn add_mapping(
             .unwrap_or(target);
         let effective =
             enabled.unwrap_or_else(|| existing.as_ref().map_or(true, |mapping| mapping.enabled));
-        let creating = !alias.eq_ignore_ascii_case(target) && existing.is_none();
+        let creating = alias != target && existing.is_none();
         // 对外别名的名字只在**这一条别名是新建的**时候检查（`creating`）。
         //
         // 两个要点，缺一个都会踩坑：
@@ -184,7 +184,7 @@ pub fn add_mapping(
                 if effective {
                     enable_exclusive(rules, &catalog, &owner, alias, target);
                 }
-            } else if enabled == Some(false) && alias.eq_ignore_ascii_case(target) {
+            } else if enabled == Some(false) && alias == target {
                 set_default(rules, &catalog, &owner, target, false);
             }
             normalize_name(rules, &catalog, &owner, alias);

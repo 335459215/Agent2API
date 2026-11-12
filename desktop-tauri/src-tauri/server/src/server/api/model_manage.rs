@@ -215,8 +215,9 @@ pub async fn remove_mapping(State(state): State<ServerState>, body: Bytes) -> Re
     // 「未挂载的模型映射」正是给这批条目留的入口。判据与视图里标记 `dangling`
     // 的那一处同源（`catalog::host_row_exists`），免得出现「界面显示为未挂载、
     // 点删除却被拒」的死锁。
-    if alias.eq_ignore_ascii_case(&target)
-        && catalog::host_row_exists(state.store(), provider_opt, &target)
+    // 只拦**逐字相同**的自映射：`glm-5.3-flash` 与 `GLM-5.3-Flash` 是两个不同的
+    // 对外名，前者是挂在后者上的别名映射，必须允许删除。
+    if alias == target && catalog::host_row_exists(state.store(), provider_opt, &target)
     {
         return errors::management_error(400, "原始 ID 的默认绑定不能删除，请关闭它的开关");
     }

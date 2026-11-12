@@ -20,9 +20,7 @@ impl Catalog {
             .iter()
             .find(|(owner, _)| owner.eq_ignore_ascii_case(provider))
             .is_some_and(|(_, items)| {
-                items
-                    .iter()
-                    .any(|item| model_id(item).eq_ignore_ascii_case(id))
+                items.iter().any(|item| model_id(item) == id)
             })
     }
 
@@ -77,7 +75,7 @@ impl Catalog {
     ) -> String {
         let manifest = self.manifest(rules, provider);
         let candidates = rules.mappings.iter().filter(|mapping| {
-            mapping.alias.eq_ignore_ascii_case(alias)
+            mapping.alias == alias
                 && mapping
                     .provider
                     .as_deref()
@@ -85,11 +83,11 @@ impl Catalog {
         });
         candidates
             .clone()
-            .find(|mapping| mapping.target.eq_ignore_ascii_case(target))
+            .find(|mapping| mapping.target == target)
             .or_else(|| {
                 candidates.clone().find(|mapping| {
                     catalog::entry_id_in_manifest(&manifest, &mapping.target)
-                        .is_some_and(|id| id.eq_ignore_ascii_case(target))
+                        .is_some_and(|id| id == target)
                 })
             })
             .map(|mapping| mapping.target.clone())
@@ -112,9 +110,7 @@ impl ModelRules {
         alias: &str,
         manifest: &[Value],
     ) -> Option<&'a Mapping> {
-        if manifest
-            .iter()
-            .any(|item| model_id(item).eq_ignore_ascii_case(alias))
+        if manifest.iter().any(|item| model_id(item) == alias)
             && self.default_enabled(provider, alias)
         {
             return None;
@@ -125,8 +121,8 @@ impl ModelRules {
         self.mappings
             .iter()
             .filter(|mapping| {
-                mapping.alias.eq_ignore_ascii_case(alias)
-                    && !mapping.alias.eq_ignore_ascii_case(&mapping.target)
+                mapping.alias == alias
+                    && mapping.alias != mapping.target
                     && mapping
                         .provider
                         .as_deref()
@@ -153,7 +149,7 @@ impl ModelRules {
         target: &str,
         manifest: &[Value],
     ) -> bool {
-        if alias.eq_ignore_ascii_case(target) {
+        if alias == target {
             return self.default_enabled(provider, target);
         }
         self.selected_mapping(provider, alias, manifest)
@@ -216,8 +212,7 @@ pub(super) fn put_binding(
 ) {
     let inherited = provider.and_then(|owner| rules.binding(owner, alias, target).cloned());
     let index = rules.mappings.iter().position(|mapping| {
-        mapping.alias.eq_ignore_ascii_case(alias)
-            && mapping.target.eq_ignore_ascii_case(target)
+        mapping.alias == alias && mapping.target == target
             && mapping
                 .provider
                 .as_deref()
@@ -273,19 +268,14 @@ pub(super) fn enable_exclusive(
     target: &str,
 ) {
     let manifest = catalog.manifest(rules, provider);
-    if !alias.eq_ignore_ascii_case(target)
-        && manifest
-            .iter()
-            .any(|item| model_id(item).eq_ignore_ascii_case(alias))
-    {
+    if alias != target && manifest.iter().any(|item| model_id(item) == alias) {
         set_default(rules, catalog, provider, alias, false);
     }
     let rivals = rules
         .mappings
         .iter()
         .filter(|mapping| {
-            mapping.alias.eq_ignore_ascii_case(alias)
-                && !mapping.target.eq_ignore_ascii_case(target)
+            mapping.alias == alias && mapping.target != target
                 && mapping
                     .provider
                     .as_deref()
@@ -296,7 +286,7 @@ pub(super) fn enable_exclusive(
     for rival in rivals {
         put_binding(rules, Some(provider), alias, &rival, None, Some(false));
     }
-    if alias.eq_ignore_ascii_case(target) {
+    if alias == target {
         set_default(rules, catalog, provider, target, true);
     } else {
         put_binding(rules, Some(provider), alias, target, None, Some(true));
@@ -310,10 +300,9 @@ pub(super) fn normalize_name(
     alias: &str,
 ) {
     let manifest = catalog.manifest(rules, provider);
-    let default = manifest
-        .iter()
-        .any(|item| model_id(item).eq_ignore_ascii_case(alias))
-        && rules.default_enabled(provider, alias);
+    let default =
+        manifest.iter().any(|item| model_id(item) == alias)
+            && rules.default_enabled(provider, alias);
     let selected = if default {
         Some(alias.to_string())
     } else {
@@ -325,11 +314,9 @@ pub(super) fn normalize_name(
         .mappings
         .iter()
         .filter(|mapping| {
-            mapping.alias.eq_ignore_ascii_case(alias)
+            mapping.alias == alias
                 && mapping.enabled
-                && !selected
-                    .as_deref()
-                    .is_some_and(|target| mapping.target.eq_ignore_ascii_case(target))
+                && !selected.as_deref().is_some_and(|target| mapping.target == target)
                 && mapping
                     .provider
                     .as_deref()
@@ -352,10 +339,10 @@ pub(super) fn active_conflict(
     let manifest = catalog.manifest(rules, provider);
     (manifest
         .iter()
-        .any(|item| model_id(item).eq_ignore_ascii_case(alias))
-        && !alias.eq_ignore_ascii_case(target)
+        .any(|item| model_id(item) == alias)
+        && alias != target
         && rules.default_enabled(provider, alias))
         || rules
             .selected_mapping(provider, alias, &manifest)
-            .is_some_and(|mapping| !mapping.target.eq_ignore_ascii_case(target))
+            .is_some_and(|mapping| mapping.target != target)
 }
